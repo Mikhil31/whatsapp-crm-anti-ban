@@ -25,14 +25,17 @@ import { segmentsRouter } from './routes/segments.js';
 import { campaignsRouter } from './routes/campaigns.js';
 import { aiRouter } from './routes/ai.js';
 import { AiJobRunner } from './ai-runner.js';
+import { IMPORT_PARSE_DEFAULTS, type ImportParseOptions } from './import-parse.js';
 import { LiveLlm, type LlmDriver } from '@crm/llm';
 
 /**
  * How large a file may be uploaded to `/imports`.
  *
- * 20 MB is a very large CSV — roughly 200,000 contact rows — and small enough that holding one
- * in memory while it is parsed is unremarkable. It becomes a streaming read, and a larger
- * number, when the `SourceConnector` port lands (docs/07-ingestion.md).
+ * 20 MB is a very large CSV — roughly 200,000 contact rows. It bounds the bytes received, not what
+ * they become (an .xlsx is a zip, and one cell in column XFD made an 18 KB file crash the API), so
+ * the parsed shape has its own limits and is read in a capped child process (R-016,
+ * `import-parse.ts`). It becomes a streaming read, and a larger number, when the `SourceConnector`
+ * port lands (docs/07-ingestion.md).
  */
 const IMPORT_LIMIT = '20mb';
 const IMPORT_LIMIT_BYTES = 20 * 1024 * 1024;
@@ -61,6 +64,8 @@ export interface AppDependencies {
    * built from `LLM_*` config on first use, so a server with no model configured still boots.
    */
   readonly llm?: LlmDriver;
+  /** How uploaded contact files are read (limits, the reader's memory and time budget). Defaults to `IMPORT_PARSE_DEFAULTS`; tests narrow it. */
+  readonly importParse?: Partial<ImportParseOptions>;
 }
 
 /**
@@ -190,7 +195,8 @@ export function buildApp(deps: AppDependencies): Express & { aiRunner: AiJobRunn
   api.use(withTenant(deps.db, deps.tenantRole));
   api.use('/senders', sendersRouter());
   api.use('/media', mediaRouter(deps.storage));
-  api.use('/imports', importsRouter(deps.storage, IMPORT_LIMIT_BYTES, deps.config.DEFAULT_COUNTRY));
+  api.use('/imports', importsRouter(deps.storage, IMPORT_LIMIT_BYTES, deps.config.DEFAULT_COUNTRY,
+    { ...IMPORT_PARSE_DEFAULTS, ...deps.importParse }));
   api.use('/contacts', contactsRouter(deps.config.DEFAULT_COUNTRY));
   api.use('/tags', tagsRouter());
   api.use('/custom-fields', customFieldsRouter());
