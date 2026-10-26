@@ -1,6 +1,6 @@
 import makeWASocket, {
   Browsers, DisconnectReason as BaileysDisconnect, downloadMediaMessage,
-  fetchLatestBaileysVersion,
+  fetchLatestBaileysVersion, normalizeMessageContent,
   type WASocket, type ConnectionState, type WAMessage
 } from 'baileys';
 import type {
@@ -417,7 +417,7 @@ export class BaileysChannelProvider implements ChannelProvider {
     socket.ev.on('connection.update', (u) => { learnOwnAddresses(); this.#onConnectionUpdate(senderId, conn, u, opts.expectQr); });
     socket.ev.on('messages.upsert', ({ messages, type }) => {
       if (type !== 'notify') return;   // 'append' is history sync, not new traffic
-      for (const m of messages) this.#emitInbound(senderId, m);
+      for (const m of messages) this.#emitInbound(senderId, m, isOwn);
     });
     socket.ev.on('messages.update', (updates) => {
       for (const u of updates) this.#emitStatus(senderId, u);
@@ -566,7 +566,7 @@ export class BaileysChannelProvider implements ChannelProvider {
   }
 
   /** Converts one Baileys message into the normalised inbound shape. */
-  #emitInbound(senderId: string, raw: unknown): void {
+  #emitInbound(senderId: string, raw: unknown, isOwn: (jid: string | null) => boolean): void {
     if (this.#shuttingDown) return;
     const m = raw as {
       key?: {
@@ -587,6 +587,10 @@ export class BaileysChannelProvider implements ChannelProvider {
     // Not a person: groups (and the groups inside communities), channels (`@newsletter`), and broadcast lists
     // and the status feed (`@broadcast`). A message from one must never create a contact or a conversation.
     if (isNotAPerson(jid)) return;
+    // The account's own chat, by number or LID: the phone's sync messages on link and "message yourself" notes. Not a contact (R-015).
+    if (isOwn(jid)) return;
+    // WhatsApp's own plumbing (history sync, key shares, "delete for everyone"): nothing a person wrote, so no message and no contact (R-015).
+    if (isSystemMessage(m.message)) return;
 
     const { body, contentType } = extractBody(m.message);
     // Baileys cannot fetch an attachment from an id — it re-downloads from the message
@@ -703,6 +707,21 @@ export function mapStatus(code: number): NormalisedStatusEvent['status'] | null 
  */
 export function isNotAPerson(jid: string): boolean {
   return jid.endsWith('@g.us') || jid.endsWith('@newsletter') || jid.endsWith('@broadcast');
+}
+
+/**
+ * True for a message that is WhatsApp's own plumbing rather than something a person wrote: a `protocolMessage` (history sync, app-state key
+ * share, "delete for everyone", disappearing-mode change, edit notice) or one carrying nothing but encryption-key distribution and context
+ * info. Looks through the same wrappers Baileys does (disappearing, view-once, edited) first.
+ */
+export function isSystemMessage(message: Record<string, unknown>): boolean {
+  const content = normalizeMessageContent(message as Parameters<typeof normalizeMessageContent>[0]) as Record<string, unknown> | undefined;
+  if (content === undefined) return true;
+  // Decoded messages carry null, not undefined, for the kinds they are not: test for both.
+  if (content.protocolMessage !== undefined && content.protocolMessage !== null) return true;
+  return !Object.entries(content).some(([kind, value]) =>
+    value !== undefined && value !== null && kind !== 'senderKeyDistributionMessage'
+      && (kind === 'conversation' || kind.endsWith('Message')));
 }
 
 /** Wrappers WhatsApp puts around a message (disappearing chats, view-once, a document with a caption). */
