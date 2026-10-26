@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import ExcelJS from 'exceljs';
 import request from 'supertest';
@@ -20,6 +20,9 @@ import { tempStorage, type TempStorage } from '../fixtures/storage.js';
  * Uploads are now parsed in a child process with its own memory and time budget, under hard limits, so a hostile or broken file is
  * refused with a 422 and the API keeps serving.
  */
+// Every upload, dry run and commit is read in a child process (R-016), a few hundred ms each and more on a busy CI machine, and
+// several tests here do four of them: the 5 s default left too little room.
+vi.setConfig({ testTimeout: 15_000 });
 const url = process.env.TEST_DATABASE_URL ?? 'postgresql://dev:dev@localhost:5434/whatsapp_crm_test';
 const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const kms = new LocalKms({ keyHex: randomBytes(32).toString('hex'), indexKeyHex: randomBytes(32).toString('hex') });
