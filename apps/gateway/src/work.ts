@@ -1111,7 +1111,7 @@ export async function restoreSessions(
  * Pauses a number's running campaigns and says why. A person resumes them after checking the phone;
  * nothing resumes on its own, so a relink cannot silently carry on a campaign into a banned number.
  */
-async function pauseCampaignsFor(ctx: WorkContext, senderId: string, reason: 'ban_suspected'): Promise<number> {
+async function pauseCampaignsFor(ctx: WorkContext, senderId: string, reason: 'ban_suspected' | 'unlinked'): Promise<number> {
   const rows = await ctx.db.execute(sql`
     UPDATE campaign SET status = 'paused', pause_reason = ${reason}, updated_at = now()
     WHERE sender_identity_id = ${senderId} AND status = 'running'
@@ -1258,11 +1258,30 @@ async function applyConnectionEventInOrg(
 
     // Say it once per logout. A failed re-login on the same dead session reports `logged_out` again,
     // and recording each one buried the real signal under a pile of identical "possible ban" alarms.
+    // `device_removed` is WhatsApp saying the device was taken off the phone's Linked devices list: an unlink, not a ban (a ban
+    // comes as a 403). It gets its own calm event, so the page does not shout "possible ban" at someone who just unlinked it.
+    if (event.detail === 'device_removed' && !deliberateUnlink && !alreadyLoggedOut) {
+      const org = (await ctx.db.execute(sql`
+        SELECT org_id AS "orgId" FROM sender_identity WHERE id = ${event.senderId}`
+      ) as unknown as Array<{ orgId: string }>)[0];
+      if (org) {
+        await recordHealthEvent(ctx.db, {
+          orgId: org.orgId, senderIdentityId: event.senderId, kind: 'unlinked_on_phone',
+          severity: 'warning', at: event.at,
+          summary: 'This device was removed under Linked devices on the phone (WhatsApp: device_removed). That is an '
+            + 'unlink, not a ban; a ban comes as a 403. Link it again once, from this page.',
+          evidence: { code: event.code ?? null, reason: event.reason, detail: event.detail }
+        });
+        ctx.logger.info({ senderId: event.senderId }, 'number removed from Linked devices on the phone');
+        await pauseCampaignsFor(ctx, event.senderId, 'unlinked');
+      }
+    }
+
     const recent = (await ctx.db.execute(sql`
       SELECT 1 FROM sender_health_event
       WHERE sender_identity_id = ${event.senderId} AND kind = 'hard_ban_suspected'
         AND at > now() - interval '30 minutes' LIMIT 1`) as unknown as unknown[]).length > 0;
-    if (!deliberateUnlink && !alreadyLoggedOut && !recent) {
+    if (event.detail !== 'device_removed' && !deliberateUnlink && !alreadyLoggedOut && !recent) {
       const org = (await ctx.db.execute(sql`
         SELECT org_id AS "orgId" FROM sender_identity WHERE id = ${event.senderId}`
       ) as unknown as Array<{ orgId: string }>)[0];

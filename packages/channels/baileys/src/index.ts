@@ -470,6 +470,7 @@ export class BaileysChannelProvider implements ChannelProvider {
 
     if (update.connection === 'close') {
       const statusCode = extractStatusCode(update.lastDisconnect);
+      const detail = extractCloseDetail(update.lastDisconnect);
       const reason = mapDisconnectReason(statusCode);
       // A close while we were still waiting for a QR is the answer: fail the link now, with WhatsApp's
       // own code, instead of making the operator wait out the timeout.
@@ -491,9 +492,9 @@ export class BaileysChannelProvider implements ChannelProvider {
         return;
       }
       this.#connections.delete(senderId);
-      this.#options.logger.warn({ senderId, statusCode, reason }, 'whatsapp connection closed');
+      this.#options.logger.warn({ senderId, statusCode, reason, detail }, 'whatsapp connection closed');
       this.#connectionEvents.push({
-        senderId, state: conn.state, reason, code: statusCode ?? null, at: new Date()
+        senderId, state: conn.state, reason, code: statusCode ?? null, detail, at: new Date()
       });
       // A link attempt that failed is reported to the operator, who decides whether to try again;
       // reconnecting on our own would just re-register in the background.
@@ -665,6 +666,16 @@ export function toDate(ts: number | Long | undefined): Date {
 export function extractStatusCode(lastDisconnect: unknown): number | null {
   const d = lastDisconnect as { error?: { output?: { statusCode?: number } } } | undefined;
   return d?.error?.output?.statusCode ?? null;
+}
+
+/**
+ * Why WhatsApp ended the stream, when it said. Baileys puts the stream error's child node on the Boom error's `data`, so
+ * `<conflict type='device_removed'/>` (the number was removed under Linked devices on the phone) arrives as `device_removed`.
+ */
+export function extractCloseDetail(lastDisconnect: unknown): string | null {
+  const d = lastDisconnect as { error?: { data?: { tag?: unknown; attrs?: { type?: unknown } } } } | undefined;
+  const data = d?.error?.data;
+  return data?.tag === 'conflict' && typeof data.attrs?.type === 'string' ? data.attrs.type : null;
 }
 
 /**
