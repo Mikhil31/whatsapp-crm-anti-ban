@@ -6,12 +6,8 @@ import { chooseRecipientNumber } from './number-fallback.js';
 import type { ChannelProvider, NormalisedConnectionEvent } from '@crm/channels';
 import {
   classifyLinkFailure, encodeLinkError,
-  markMessageFailed, markMessageSent, checkSendAllowance, checkContactGraph,
-  scoreConnectedSenders, dispatchCampaign, reconcileCampaign, writeOpenings, dailyCeiling, typingDelayMs,
-  recoveryState, beginRecovery, deliveryDelayMultiplier, type RecoveryIncident,
-  type ReplyFloorConfig, readIsDue, circadianActivity, localHour, entropyPlan, type EntropyScheduler,
-  timezoneForPhone, circadianDelayMs, CIRCADIAN_QUIET_THRESHOLD, checkRestriction, recordHealthEvent,
-  reencryptBatch
+  markMessageFailed, markMessageSent, dispatchCampaign, reconcileCampaign, writeOpenings, typingDelayMs,
+  basicPolicy, type AntiBanPolicy, recordHealthEvent, reencryptBatch
 } from '@crm/core';
 import type { Logger } from '@crm/shared';
 import type { KmsDriver } from '@crm/kms-local';
@@ -23,11 +19,7 @@ interface QueuedSend {
   readonly orgId: string;
   readonly senderIdentityId: string;
   readonly senderPhone: string | null;
-  /** The sender's health status, so a quarantined number does not send. */
-  readonly senderStatus: string;
-  /** `enforce` (default) or `advisory` (D-29: holds are recorded as warnings, not obeyed). */
-  readonly enforcement: string;
-  /** Who the message is to, for the contact-graph gate's relationship lookup. */
+  /** Who the message is to, for the number-fallback lookup. */
   readonly contactId: string;
   /** Flagged do-not-contact; refused unless an admin overrode it for this message (`dncOverride`). */
   readonly doNotContact: boolean;
@@ -40,20 +32,6 @@ interface QueuedSend {
   readonly mediaContentType: string | null;
   readonly mediaGifPlayback: boolean | null;
   readonly mediaFilename: string | null;
-  /** Pacing inputs, read with the job so the gate costs no extra round trip. */
-  readonly warmupStartedAt: string | null;
-  readonly dailyCapOverride: number | null;
-  /** When the sender last received an inbound, or null if never — drives the outbound-only clamp. */
-  readonly lastInboundAt: string | null;
-  /** When the socket last (re)opened, for the post-reconnect ramp. */
-  readonly lastConnectedAt: string | null;
-  /** Layer 6 recovery state, read with the job: the incident class and when its pause ends. */
-  readonly recoveryIncident: string | null;
-  readonly recoveryUntil: string | null;
-  /** `ok` | `suspected` | `likely` — the silent-restriction detector's verdict for this number. */
-  readonly restrictionState: string;
-  /** The sender's recent delivery ratio (from `health`), for the Layer 5 adaptive-speed curve. */
-  readonly deliveryRatio: number;
 }
 
 /** A pending request from the API to link a number. */
@@ -79,32 +57,15 @@ export interface WorkContext {
   /** Decrypts a stored message body back to text for sending. */
   readonly decrypt: (cipher: Uint8Array) => string;
   /**
-   * Send ceilings, from config. Present so the anti-ban gate is configurable per deployment
-   * without a code change, and so tests can drive it to its limits in a few sends rather than
-   * fifteen hundred.
+   * What decides when a message may go and how many campaign messages queue at once. Absent = `basicPolicy`, so a
+   * context that says nothing still spaces its sends out; tests that want none of it pass a policy that always sends.
    */
-  readonly limits: {
-    readonly perMinute: number;
-    readonly perDay: number;
-    /** Most identical message bodies a sender may hold per 24h (Layer 3 / D-26). Absent = no cap. */
-    readonly identicalBodyCap?: number;
-    /** Circadian pacing timezone, or null to leave the send cadence flat (layers 1–2 only). */
-    readonly circadianTimezone?: string | null;
-  };
+  readonly antiBan?: AntiBanPolicy;
+  /** Most identical message bodies a sender may hold per 24h (D-26). Absent = no cap. */
+  readonly identicalBodyCap?: number;
   /**
-   * Contact-graph caps on starting new stranger conversations, or null to skip the relationship
-   * gate entirely. Opt-in like circadian pacing so tests that do not exercise it are unaffected.
-   */
-  readonly contactGraph?: {
-    readonly newContactsPerHour: number;
-    readonly newContactsPerDay: number;
-    readonly replyFloor?: ReplyFloorConfig;
-  } | null;
-  /**
-   * Emit a `composing` presence and pause a human-like beat before each send (docs/08-antiban.md,
-   * D-24). Opt-in like circadian and the contact-graph gate, so tests that do not exercise it are
-   * unaffected and add no real delay. Cosmetic anti-ban — a failure to signal presence never fails
-   * the send.
+   * Emit a `composing` presence and pause a human-like beat before each send (D-24). Opt-in, so tests that do
+   * not exercise it are unaffected and add no real delay. A failure to signal presence never fails the send.
    */
   readonly typingSimulation?: boolean;
   /**
@@ -114,41 +75,21 @@ export interface WorkContext {
    */
   readonly verifyFallbackNumbers?: boolean;
   /**
-   * Mark inbound messages read after a human-like 10–60 minute delay, in active hours only
-   * (docs/08-antiban.md, Layer 3). Opt-in like the other behaviour layers, so tests that do not
-   * exercise it never see a read receipt.
-   */
-  readonly readReceipts?: boolean;
-  /**
    * The restricted role tenant-scoped work drops to (`crm_app`), as resolved at startup by
    * `resolveTenantRole`. Null or absent when the connecting role is already subject to row-level
    * security, or in tests that run as a superuser and only need the org set (D-41).
    */
   readonly tenantRole?: string | null;
-  /** How many of the oldest queued messages one sweep attempts. Default 200; the simulation lowers it. */
+  /** How many of the oldest queued messages one sweep attempts. Default 200. */
   readonly sweepBatchSize?: number;
-  /** Minimum gap between restriction sweeps. Default 60 000 ms; tests pass 0. */
-  readonly restrictionSweepEveryMs?: number;
   /**
    * Where stored files live, so a queued message that carries one can be read back and sent
    * (D-25). Absent in tests that only send text; a media message with no storage fails visibly.
    */
   readonly storage?: StorageDriver;
   /**
-   * Also respect the *recipient's* day, inferred from their phone number's country: a send to
-   * someone in their small hours is deferred, and one in their shoulders is slowed. Only ever
-   * adds caution. Needs `limits.circadianTimezone` (the sender's own zone) to be set too.
-   */
-  readonly recipientTimezone?: boolean;
-  /**
-   * Background presence noise while idle (docs/08-antiban.md, Layer 3). Present = on: the
-   * scheduler decides per number when an event is due (every 2–6 h). Absent in tests that do not
-   * exercise it.
-   */
-  readonly entropy?: EntropyScheduler;
-  /**
-   * Waits before a send. Injected so tests do not spend real seconds on jitter — production
-   * passes a real sleep, and skipping it entirely would defeat the point of the jitter.
+   * Waits before a send. Injected so tests do not spend real seconds on the gap between sends — production
+   * passes a real sleep, and skipping it entirely would defeat the point of the gap.
    */
   readonly sleep?: (ms: number) => Promise<void>;
 }
@@ -192,144 +133,6 @@ async function orgOfSession(ctx: WorkContext, sessionId: string): Promise<string
     JOIN sender_identity si ON si.id = cs.sender_identity_id
     WHERE cs.id = ${sessionId}`);
   return (rows as unknown as Array<{ orgId: string }>)[0]?.orgId ?? null;
-}
-
-/**
- * One background noise event for a connected number: an abandoned "typing…" to a contact who has
- * replied (never to a stranger — typing at someone who never wrote back is itself odd), then a
- * brief available→unavailable presence blip. Strictly cosmetic and best-effort: every call is
- * swallowed on failure and nothing here can affect a send.
- */
-export async function runEntropyEvent(
-  ctx: WorkContext, senderId: string, senderPhone: string,
-  rng: () => number = Math.random
-): Promise<void> {
-  if (!ctx.provider.presence) return;
-  const plan = entropyPlan(rng);
-  const sender = { id: senderId, phoneE164: senderPhone };
-  const sleep = ctx.sleep ?? (async () => {});
-  try {
-    if (ctx.provider.typing) {
-      const rows = await ctx.db.execute(sql`
-        SELECT ci.value_normalized AS "value", ci.kind AS "kind"
-        FROM conversation v
-        JOIN contact_identity ci ON ci.contact_id = v.contact_id AND ci.kind IN ('phone','wa_jid','wa_lid')
-        WHERE v.sender_identity_id = ${senderId} AND v.last_inbound_at IS NOT NULL
-        ORDER BY v.last_inbound_at DESC, CASE ci.kind WHEN 'phone' THEN 0 WHEN 'wa_jid' THEN 1 ELSE 2 END
-        LIMIT 1`);
-      const target = (rows as unknown as Array<{ value: string; kind: string }>)[0];
-      if (target) {
-        const to = target.kind === 'phone'
-          ? { phoneE164: target.value } : { phoneE164: '', providerAddress: target.value };
-        await ctx.provider.typing(sender, to, 'composing');
-        await sleep(plan.typingMs);
-        await ctx.provider.typing(sender, to, 'paused');      // started typing, changed their mind
-      }
-    }
-    if (await ctx.provider.presence(sender, 'available')) {
-      await sleep(plan.presenceMs);
-      await ctx.provider.presence(sender, 'unavailable');
-    }
-  } catch (err) {
-    ctx.logger.warn({ err, senderId }, 'background entropy event failed');
-  }
-}
-
-/**
- * Fires whichever numbers' noise events are due, in active hours only. The events themselves take
- * tens of seconds (typing, then a presence blip), so they run detached rather than holding up the
- * send sweep; each is best-effort and logs its own failure.
- */
-export async function sweepEntropy(ctx: WorkContext, now: Date = new Date()): Promise<number> {
-  if (!ctx.entropy) return 0;
-  const counts = await inEachOrg(ctx, (c) => sweepEntropyInOrg(c, now));
-  return counts.reduce((a, b) => a + b, 0);
-}
-
-/** One org's share of `sweepEntropy`, run with a context already pinned to that org. */
-async function sweepEntropyInOrg(ctx: WorkContext, now: Date): Promise<number> {
-  if (!ctx.entropy) return 0;
-  const tz = ctx.limits?.circadianTimezone ?? null;
-  if (tz && circadianActivity(localHour(now, tz)) < 0.5) return 0;
-  const rows = await ctx.db.execute(sql`
-    SELECT si.id AS "id", si.phone_e164 AS "phone"
-    FROM sender_identity si JOIN channel_session cs ON cs.sender_identity_id = si.id
-    WHERE si.status IN ('active','degraded') AND cs.connection_state = 'open'`);
-  let fired = 0;
-  for (const r of rows as unknown as Array<{ id: string; phone: string | null }>) {
-    if (!ctx.entropy.due(r.id, now)) continue;
-    fired++;
-    void runEntropyEvent(ctx, r.id, r.phone ?? '');
-  }
-  return fired;
-}
-
-/**
- * Sends the read receipts that have come due (Layer 3 read behaviour).
- *
- * An inbound message is marked read only after its own 10–60 minute delay and only in the
- * number's active hours, and at most a few per sender per sweep, so a backlog can never be
- * blue-ticked in one burst. `read_at` on an inbound message records "we sent the receipt"; it is
- * set only after the provider confirms, so a closed socket leaves the message to be tried again.
- */
-export async function sweepReadReceipts(ctx: WorkContext, now: Date = new Date()): Promise<number> {
-  if (!ctx.readReceipts || !ctx.provider.markRead) return 0;
-  const counts = await inEachOrg(ctx, (c) => sweepReadReceiptsInOrg(c, now));
-  return counts.reduce((a, b) => a + b, 0);
-}
-
-/** One org's share of `sweepReadReceipts`, run with a context already pinned to that org. */
-async function sweepReadReceiptsInOrg(ctx: WorkContext, now: Date): Promise<number> {
-  if (!ctx.readReceipts || !ctx.provider.markRead) return 0;
-  const tz = ctx.limits?.circadianTimezone ?? null;
-  const activity = tz ? circadianActivity(localHour(now, tz)) : null;
-  if (activity !== null && activity < 0.5) return 0;       // quiet hours: nobody reads at 4 a.m.
-
-  const rows = await ctx.db.execute(sql`
-    SELECT m.id AS "messageId", m.provider_message_id AS "providerMessageId",
-           m.created_at AS "receivedAt", si.id AS "senderId", si.phone_e164 AS "senderPhone",
-           ci.value_normalized AS "recipientValue", ci.kind AS "recipientKind"
-    FROM message m
-    JOIN conversation v ON v.id = m.conversation_id
-    JOIN sender_identity si ON si.id = v.sender_identity_id
-    JOIN LATERAL (
-      SELECT value_normalized, kind FROM contact_identity
-      WHERE contact_id = v.contact_id AND kind IN ('phone','wa_jid','wa_lid')
-      ORDER BY CASE kind WHEN 'phone' THEN 0 WHEN 'wa_jid' THEN 1 ELSE 2 END, is_primary DESC
-      LIMIT 1
-    ) ci ON true
-    WHERE m.direction = 'inbound' AND m.read_at IS NULL
-      AND m.created_at > ${now.toISOString()}::timestamptz - interval '24 hours'
-      AND m.created_at < ${now.toISOString()}::timestamptz - interval '10 minutes'
-      AND si.status IN ('active','degraded')
-    ORDER BY m.created_at ASC
-    LIMIT 200`);
-
-  const perSender = new Map<string, number>();
-  let sent = 0;
-  for (const r of rows as unknown as Array<{
-    messageId: string; providerMessageId: string; receivedAt: string; senderId: string;
-    senderPhone: string | null; recipientValue: string; recipientKind: string;
-  }>) {
-    if ((perSender.get(r.senderId) ?? 0) >= 3) continue;   // a trickle, never a burst
-    if (!readIsDue(r.messageId, new Date(r.receivedAt), now, activity)) continue;
-    const recipient = r.recipientKind === 'phone'
-      ? { phoneE164: r.recipientValue }
-      : { phoneE164: '', providerAddress: r.recipientValue };
-    try {
-      const ok = await ctx.provider.markRead(
-        { id: r.senderId, phoneE164: r.senderPhone ?? '' }, recipient, r.providerMessageId
-      );
-      if (!ok) continue;                                    // socket closed: try again next sweep
-      await ctx.db.execute(sql`UPDATE message SET read_at = ${now.toISOString()}::timestamptz WHERE id = ${r.messageId}`);
-      perSender.set(r.senderId, (perSender.get(r.senderId) ?? 0) + 1);
-      sent++;
-    } catch (err) {
-      // Cosmetic and best-effort: never let a refused receipt disturb the sweep.
-      ctx.logger.warn({ err, messageId: r.messageId }, 'read receipt failed');
-    }
-  }
-  return sent;
 }
 
 /**
@@ -454,43 +257,11 @@ async function handleUnlinkRequestInOrg(ctx: WorkContext, sessionId: string): Pr
 }
 
 /**
- * Messages this process is handling right now. A message can reach `handleSend` from the NOTIFY,
- * from the sweep, and (below) from its own retry timer, and each call sleeps a jittered pause
- * before sending: without this a second caller arriving during the pause would send it twice.
+ * Messages this process is handling right now. A message can reach `handleSend` from the NOTIFY and from the sweep,
+ * and each call may sleep before sending: without this a second caller arriving during the pause would send it twice.
  * In-process only; a second gateway process would need a database claim, which there is none of.
  */
 const inFlight = new Set<string>();
-
-/** Pending "try this held message again at the moment its gate clears" timers, by message id. */
-const retryTimers = new Map<string, NodeJS.Timeout>();
-
-/** Never retry sooner than this, or later than this: past it, the safety-net sweep is as good. */
-const RETRY_MIN_MS = 1_000;
-const RETRY_MAX_MS = 15 * 60_000;
-
-/**
- * Re-runs a held message when its gate says it will clear, instead of leaving it for the next
- * sweep (default 60 s). Purely a latency win: the gate is re-checked in full when the timer fires
- * and holds again if it still must, so this can never send something the gates would refuse.
- * A little random spread keeps a queue of messages that all clear together from stampeding.
- * Timers are unref'd, so they never keep a stopping process alive; the sweep stays the net.
- */
-export function scheduleRetry(ctx: WorkContext, messageId: string, afterMs: number): void {
-  const delay = Math.min(RETRY_MAX_MS, Math.max(RETRY_MIN_MS, afterMs)) + Math.floor(Math.random() * 750);
-  const existing = retryTimers.get(messageId);
-  if (existing !== undefined) clearTimeout(existing);
-  const timer = setTimeout(() => {
-    retryTimers.delete(messageId);
-    handleSend(ctx, messageId).catch((error: unknown) => {
-      ctx.logger.error(
-        { messageId, err: error instanceof Error ? error.message : String(error) },
-        'scheduled retry of a held message failed'
-      );
-    });
-  }, delay);
-  timer.unref();
-  retryTimers.set(messageId, timer);
-}
 
 /**
  * Sends one queued message.
@@ -500,19 +271,16 @@ export function scheduleRetry(ctx: WorkContext, messageId: string, afterMs: numb
  * operator retried, and it died again — a permanent crash loop for a single contact
  * (docs/00-prior-art.md, M26).
  *
- * There is no retry here yet, deliberately. Retrying into WhatsApp is exactly how a number gets
- * banned, so it belongs in the dispatcher with the rest of the pacing (P6) rather than in a
- * loop that has no idea how fast it is going.
+ * There is no retry here, deliberately. Retrying into WhatsApp is exactly how a number gets banned, so a failed
+ * message stays failed until a person sends it again.
  */
 export async function handleSend(ctx: WorkContext, messageId: string): Promise<void> {
   if (inFlight.has(messageId)) return;
   inFlight.add(messageId);
   try {
-    // One send decision at a time per number. The allowance check counts what has already *left*,
-    // and a send does not count until after its pause, so two messages checked at once both see
-    // the same headroom and both go: a queue whose holds clear together (or a NOTIFY landing
-    // beside a sweep) overshoots the ceiling. Serialising per number makes check-then-send
-    // atomic, which is also the human cadence the pacing is trying to produce.
+    // One send at a time per number. The policy's gap is measured from the last send that has *left*, and a send
+    // does not count until after its pause, so two messages checked at once would both see the same gap and both
+    // go. Serialising per number makes check-then-send atomic, which is also the cadence the gap is there to produce.
     const owner = (await ctx.db.execute(sql`
       SELECT v.sender_identity_id AS "senderId", m.org_id AS "orgId"
       FROM message m JOIN conversation v ON v.id = m.conversation_id
@@ -555,14 +323,6 @@ async function handleSendOnce(ctx: WorkContext, messageId: string): Promise<void
            ma.storage_key AS "mediaStorageKey", ma.content_type AS "mediaContentType", ma.gif_playback AS "mediaGifPlayback",
            ma.filename AS "mediaFilename",
            si.id AS "senderIdentityId", si.phone_e164 AS "senderPhone",
-           si.status AS "senderStatus", si.enforcement AS "enforcement",
-           si.warmup_started_at AS "warmupStartedAt",
-           si.daily_cap_override AS "dailyCapOverride",
-           si.last_inbound_at AS "lastInboundAt",
-           cs.last_connected_at AS "lastConnectedAt",
-           si.recovery_incident AS "recoveryIncident",
-           si.recovery_until AS "recoveryUntil", si.restriction_state AS "restrictionState",
-           COALESCE((si.health->>'deliveryRatio')::float, 1) AS "deliveryRatio",
            v.contact_id AS "contactId", ct.do_not_contact AS "doNotContact",
            m.dnc_override AS "dncOverride",
            ci.value_normalized AS "recipientValue", ci.kind AS "recipientKind"
@@ -570,7 +330,6 @@ async function handleSendOnce(ctx: WorkContext, messageId: string): Promise<void
     JOIN conversation v   ON v.id = m.conversation_id
     JOIN contact ct       ON ct.id = v.contact_id
     JOIN sender_identity si ON si.id = v.sender_identity_id
-    LEFT JOIN channel_session cs ON cs.sender_identity_id = si.id
     LEFT JOIN media_asset ma ON ma.id = m.media_id AND ma.org_id = m.org_id
     JOIN contact_identity ci ON ci.contact_id = v.contact_id
                             AND ci.kind IN ('phone','wa_jid','wa_lid')
@@ -594,7 +353,7 @@ async function handleSendOnce(ctx: WorkContext, messageId: string): Promise<void
   }
 
   // The last line of the do-not-contact gate. It is checked when a message is created, but a contact
-  // can be flagged after that, and advisory mode relaxes only number-protecting holds — never this.
+  // can be flagged after that.
   // Only an admin's explicit, audited per-message override lets it through.
   if (job.doNotContact && !job.dncOverride) {
     await markMessageFailed(ctx.db, messageId, 'do_not_contact');
@@ -622,167 +381,31 @@ async function handleSendOnce(ctx: WorkContext, messageId: string): Promise<void
       return;
     }
 
-    // Advisory mode (D-29): the number-protecting holds below are still *computed*, but an advisory
-    // sender goes ahead anyway. Each hold it would have obeyed is counted and remembered, so the
-    // operator sees what they are accepting. Do-not-contact and consent are not here — they stop a
-    // message from ever being queued — and a disconnected socket above cannot be bypassed.
-    const advisory = job.enforcement === 'advisory';
-    const bypass = async (reason: string): Promise<void> => {
-      ctx.logger.warn(
-        { messageId, senderId: job.senderIdentityId, reason },
-        `advisory mode: sending past an anti-ban hold (${reason})`
-      );
-      await ctx.db.execute(sql`
-        UPDATE sender_identity
-        SET advisory_bypass_count = advisory_bypass_count + 1, advisory_last_bypass = ${reason}
-        WHERE id = ${job.senderIdentityId}`);
-    };
-
-    // ── the health gate ─────────────────────────────────────────────────────────────
-    // A quarantined number is the engine's emergency brake: it has tripped enough risk signals
-    // (docs/08-antiban.md, health scoring) that sending more is the last thing it should do.
-    // Leave the message queued so it goes out if the number recovers to active, never fail it.
-    if (job.senderStatus === 'quarantined') {
-      if (!advisory) {
-        ctx.logger.warn(
-          { messageId, senderId: job.senderIdentityId },
-          'sender quarantined — leaving message queued'
-        );
-        await hold('quarantined');
-        return;
-      }
-      await bypass('quarantined');
-    }
-
-    // ── the recovery gate (Layer 6) ───────────────────────────────────────────────────
-    // A number cooling off after a typed incident (463/429/soft-ban) is held entirely until its
-    // pause lifts, then sends at a reduced daily cap that ramps back weekly. The pause is a hold,
-    // exactly like quarantine (message left queued, never failed); the ramp is a fraction handed
-    // to the pacing gate below, which can only lower the ceiling (docs/08-antiban.md).
-    const recovery = recoveryState({
-      incident: job.recoveryIncident,
-      recoveryUntil: job.recoveryUntil === null ? null : new Date(job.recoveryUntil)
+    // ── the anti-ban policy ──────────────────────────────────────────────────────────
+    // Everything that decides when this message may go is behind one interface (`antiBan`): it can let the message
+    // go, ask for a pause first, or leave it queued with a reason. Do-not-contact above and the number being
+    // connected are not its business and cannot be relaxed by it.
+    const lastSent = (await ctx.db.execute(sql`
+      SELECT max(m.sent_at) AS "lastSentAt"
+      FROM message m JOIN conversation v ON v.id = m.conversation_id
+      WHERE v.sender_identity_id = ${job.senderIdentityId} AND m.direction = 'outbound'`
+    ) as unknown as Array<{ lastSentAt: string | null }>)[0]?.lastSentAt ?? null;
+    const decision = await (ctx.antiBan ?? basicPolicy).beforeSend({
+      senderIdentityId: job.senderIdentityId, now: new Date(),
+      lastSentAt: lastSent === null ? null : new Date(lastSent)
     });
-    if (recovery.phase === 'paused') {
-      if (!advisory) {
-        ctx.logger.warn(
-          {
-            messageId, senderId: job.senderIdentityId,
-            incident: recovery.incident, resumesAt: recovery.resumesAt?.toISOString()
-          },
-          'sender in recovery pause — leaving message queued'
-        );
-        await hold(`recovery_pause:${recovery.incident ?? 'incident'}`);
-        if (recovery.resumesAt !== null && recovery.resumesAt !== undefined) {
-          scheduleRetry(ctx, messageId, recovery.resumesAt.getTime() - Date.now());
-        }
-        return;
-      }
-      await bypass(`recovery_pause:${recovery.incident}`);
-    }
-
-    // ── the anti-ban gate ────────────────────────────────────────────────────────────
-    // Nothing reaches a provider without passing this. It is the only thing between a loop
-    // and a permanently banned number, and it is a ceiling rather than a target
-    // (docs/08-antiban.md, P6 layers 1 and 2).
-    const pacing = await checkSendAllowance(ctx.db, job.senderIdentityId, {
-      perMinute: ctx.limits.perMinute,
-      perDay: ctx.limits.perDay,
-      dailyCapOverride: job.dailyCapOverride,
-      warmupStartedAt: job.warmupStartedAt === null ? null : new Date(job.warmupStartedAt),
-      lastInboundAt: job.lastInboundAt === null ? null : new Date(job.lastInboundAt),
-      lastConnectedAt: job.lastConnectedAt === null ? null : new Date(job.lastConnectedAt),
-      circadianTimezone: ctx.limits.circadianTimezone ?? null,
-      // While ramping out of a recovery, the daily ceiling is scaled down to this fraction.
-      ...(recovery.phase === 'ramping' ? { recoveryCapFraction: recovery.capFraction } : {})
-    });
-
-    let delayMs = pacing.allowed ? pacing.delayMs : 2_000;
-    if (!pacing.allowed && advisory) {
-      await bypass(`pacing:${pacing.reason}`);
-    } else if (!pacing.allowed) {
-      // Left queued, exactly like a disconnected sender: a message that is merely early is
-      // not a failed message, and failing it would lose it. The sweep retries.
-      ctx.logger.warn(
-        {
-          messageId, senderId: job.senderIdentityId, reason: pacing.reason,
-          retryAfterMs: pacing.retryAfterMs
-        },
-        `send paced: ${pacing.detail}`
-      );
-      await hold(`paced:${pacing.reason}`);
-      scheduleRetry(ctx, messageId, pacing.retryAfterMs);
+    if (decision.action === 'hold') {
+      // Left queued, exactly like a disconnected sender: a message that is merely early is not a failed message.
+      ctx.logger.warn({ messageId, senderId: job.senderIdentityId, reason: decision.reason }, 'send held by the anti-ban policy');
+      await hold(decision.reason);
       return;
     }
-
-    // ── the contact-graph gate ───────────────────────────────────────────────────────
-    // Who the message is going to. A stranger send waits longer than a reply, and starting too
-    // many brand-new conversations too fast is refused outright — cold-blasting a fresh list is
-    // one of the top ban signals (docs/08-antiban.md). Opt-in; skipped when unconfigured.
-    if (ctx.contactGraph) {
-      const graph = await checkContactGraph(
-        ctx.db, job.senderIdentityId, job.contactId, ctx.contactGraph
-      );
-      if (!graph.allowed && advisory) {
-        await bypass(`contact_graph:${graph.reason}`);
-      } else if (!graph.allowed) {
-        // Left queued like any paced message — a stranger held back by the new-contact throttle
-        // has not failed, it is waiting its turn.
-        ctx.logger.warn(
-          {
-            messageId, senderId: job.senderIdentityId, contactId: job.contactId,
-            reason: graph.reason, retryAfterMs: graph.retryAfterMs
-          },
-          `send paced: ${graph.detail}`
-        );
-        await hold(`paced:${graph.reason}`);
-        scheduleRetry(ctx, messageId, graph.retryAfterMs);
-        return;
-      }
-      // Stretch the pause by the relationship multiplier, capped so a stranger at a slow hour is
-      // paced, not parked for a minute. The base delay is already circadian-scaled.
-      if (graph.allowed) delayMs = Math.min(30_000, Math.round(delayMs * graph.delayMultiplier));
-    }
-
-    // Recipient's day (Layer 3): circadian above is the sender's clock. Infer the recipient's zone
-    // from their number and defer a send landing in their small hours, or stretch one in their
-    // shoulders. Phone recipients only (a privacy id carries no country), and only when it
-    // differs from the sender's own zone, so same-zone traffic is untouched.
-    if (ctx.recipientTimezone && ctx.limits.circadianTimezone && job.recipientKind === 'phone') {
-      const theirTz = timezoneForPhone(job.recipientValue);
-      if (theirTz && theirTz !== ctx.limits.circadianTimezone) {
-        const theirs = circadianActivity(localHour(new Date(), theirTz));
-        if (theirs < CIRCADIAN_QUIET_THRESHOLD && advisory) {
-          await bypass(`recipient_hours:${theirTz}`);
-        } else if (theirs < CIRCADIAN_QUIET_THRESHOLD) {
-          ctx.logger.warn(
-            { messageId, senderId: job.senderIdentityId, recipientTimezone: theirTz },
-            `send paced: recipient is outside their sending hours (${theirTz})`
-          );
-          await hold('recipient_hours');
-          return;                       // left queued; the sweep tries again later
-        }
-        if (theirs < 1) delayMs = Math.min(30_000, circadianDelayMs(delayMs, theirs));
-      }
-    }
-
-    // Layer 5 adaptive speed: scale the pause by the delivery-ratio curve (×1 healthy → ×4 when
-    // delivery has collapsed), and keep a degraded sender to at least half speed whatever its
-    // delivery looks like, since it may be degraded for failures or disconnects, not delivery.
-    let healthFactor = deliveryDelayMultiplier(job.deliveryRatio);
-    if (job.senderStatus === 'degraded') healthFactor = Math.max(healthFactor, 2);
-    // A number WhatsApp may be limiting: slow down while the evidence is gathered, rather than keep
-    // feeding a queue that is not being delivered.
-    if (job.restrictionState !== 'ok') healthFactor = Math.max(healthFactor, 3);
-    delayMs = Math.min(30_000, Math.round(delayMs * healthFactor));
-
-    // The jittered pause. Deliberately before the send rather than after, so a burst arriving
-    // at once is spread out rather than going at once and then waiting.
-    if (ctx.sleep) await ctx.sleep(delayMs);
+    // Before the send rather than after, so a burst arriving at once is spread out instead of going at once and then waiting.
+    if (decision.action === 'wait' && ctx.sleep) await ctx.sleep(decision.ms);
 
     const senderRef = { id: job.senderIdentityId, phoneE164: job.senderPhone ?? '' };
     // A contact with more than one number: make sure the one we send to has a WhatsApp account, and
-    // move to the next that does if not (D-60). Runs after the pacing gates and the pre-send pause.
+    // move to the next that does if not (D-60). Runs after the anti-ban policy and its pause.
     let recipientValue = job.recipientValue;
     if (ctx.verifyFallbackNumbers) {
       const pick = await chooseRecipientNumber(ctx, job, senderRef);
@@ -800,7 +423,7 @@ async function handleSendOnce(ctx: WorkContext, messageId: string): Promise<void
     const body = ctx.decrypt(job.bodyEnc);
 
     // An attachment (D-25): read the file back from storage so the adapter can upload it. Done
-    // before the pacing pause is spent on a message that cannot go. A file that cannot be read
+    // before the typing pause is spent on a message that cannot go. A file that cannot be read
     // fails this one message with a clear code — the inbox shows it, nothing else is affected.
     let media: { bytes: Uint8Array; contentType: string; filename: string | null; gifPlayback?: boolean } | undefined;
     if (job.mediaStorageKey !== null) {
@@ -815,7 +438,7 @@ async function handleSendOnce(ctx: WorkContext, messageId: string): Promise<void
 
     // ── typing simulation ─────────────────────────────────────────────────────────────
     // Show the "typing…" bubble and pause a beat proportional to the message length before
-    // sending, so the send looks human rather than instant (docs/08-antiban.md, D-24). Opt-in,
+    // sending, so the send looks human rather than instant (D-24). Opt-in,
     // and strictly cosmetic: presence is best-effort, so a failure to signal it is swallowed and
     // never fails the send it precedes.
     if (ctx.typingSimulation && ctx.provider.typing) {
@@ -844,16 +467,15 @@ async function handleSendOnce(ctx: WorkContext, messageId: string): Promise<void
 }
 
 /**
- * Turns campaign recipients into queued messages, never faster than the ceiling allows.
+ * Turns campaign recipients into queued messages, a small batch at a time.
  *
- * **This is what stops a campaign being a ban.** A campaign does not queue its messages at
- * launch: the `campaign_recipient` rows are the queue, and this converts only as many as the
- * sender may still send today. Everything downstream — the pacing gate in `handleSend` — then
- * applies unchanged, so there is no second path to a provider and no way for a campaign to
+ * A campaign does not queue its messages at launch: the `campaign_recipient` rows are the queue, and this
+ * converts only as many as the anti-ban policy allows (`campaignBatch`). Everything downstream — the policy in
+ * `handleSend` — then applies unchanged, so there is no second path to a provider and no way for a campaign to
  * bypass the gates (M12).
  *
- * It also keeps a campaign from burying an agent's reply: only a day's worth of campaign
- * messages is ever sitting in the send queue at once.
+ * It also keeps a campaign from burying an agent's reply: only a small batch of campaign messages is ever
+ * sitting in the send queue at once.
  */
 export async function dispatchCampaigns(ctx: WorkContext): Promise<number> {
   const counts = await inEachOrg(ctx, (c) => dispatchCampaignsInOrg(c));
@@ -866,56 +488,27 @@ async function dispatchCampaignsInOrg(ctx: WorkContext): Promise<number> {
 
   const rows = await ctx.db.execute(sql`
     SELECT c.id, c.org_id AS "orgId", c.body, c.sender_identity_id AS "senderIdentityId",
-           si.warmup_started_at AS "warmupStartedAt",
-           si.daily_cap_override AS "dailyCapOverride",
-           si.last_inbound_at AS "lastInboundAt",
-           c.gate_overrides AS "gateOverrides", si.enforcement AS "enforcement"
+           c.gate_overrides AS "gateOverrides"
     FROM campaign c
-    JOIN sender_identity si ON si.id = c.sender_identity_id
-    WHERE c.status = 'running' AND si.status <> 'quarantined'
+    WHERE c.status = 'running'
     ORDER BY c.started_at ASC
     LIMIT 20`);
 
+  const policy = ctx.antiBan ?? basicPolicy;
   let queued = 0;
   for (const campaign of rows as unknown as Array<{
-    id: string; orgId: string; body: string; senderIdentityId: string;
-    warmupStartedAt: string | null; dailyCapOverride: number | null; lastInboundAt: string | null;
-    gateOverrides: string[]; enforcement: string;
+    id: string; orgId: string; body: string; senderIdentityId: string; gateOverrides: string[];
   }>) {
     const tenant = tenantRunner(ctx, campaign.orgId);
-    const advisory = campaign.enforcement === 'advisory';
 
-    // What this sender may still send today, after everything it has already sent —
-    // including replies an agent sent by hand. A campaign gets the remainder, never a
-    // separate allowance of its own.
-    const usage = await ctx.db.execute(sql`
-      SELECT count(*) FILTER (WHERE m.sent_at > now() - interval '1 day')::int AS "sentToday",
-             count(*) FILTER (WHERE m.status = 'queued')::int AS "alreadyQueued",
-             max(m.sent_at) AS "lastSentAt"
+    // What is already waiting for this sender, from any source (a reply an agent typed counts): the policy says how
+    // many more campaign messages may join it. Without this a sweep every few seconds would queue the whole audience.
+    const waiting = (await ctx.db.execute(sql`
+      SELECT count(*)::int AS n
       FROM message m JOIN conversation v ON v.id = m.conversation_id
-      WHERE v.sender_identity_id = ${campaign.senderIdentityId} AND m.direction = 'outbound'`);
-    const u = (usage as unknown as Array<{
-      sentToday: number; alreadyQueued: number; lastSentAt: string | null;
-    }>)[0]!;
-
-    const ceiling = dailyCeiling(
-      {
-        perMinute: ctx.limits.perMinute, perDay: ctx.limits.perDay,
-        dailyCapOverride: campaign.dailyCapOverride,
-        warmupStartedAt: campaign.warmupStartedAt === null
-          ? null : new Date(campaign.warmupStartedAt),
-        lastInboundAt: campaign.lastInboundAt === null ? null : new Date(campaign.lastInboundAt)
-      },
-      u.lastSentAt === null ? null : new Date(u.lastSentAt),
-      new Date()
-    );
-    // Messages already waiting count against the allowance, or a sweep every few seconds
-    // would queue the whole audience before the first one had gone out.
-    // Advisory mode (D-29) does not enforce the ceiling, but a sweep still queues a bounded batch
-    // rather than the whole audience at once.
-    const room = advisory
-      ? Math.max(0, (ctx.sweepBatchSize ?? 200) - u.alreadyQueued)
-      : Math.max(0, ceiling - u.sentToday - u.alreadyQueued);
+      WHERE v.sender_identity_id = ${campaign.senderIdentityId} AND m.direction = 'outbound' AND m.status = 'queued'`
+    ) as unknown as Array<{ n: number }>)[0]!.n;
+    const room = policy.campaignBatch({ senderIdentityId: campaign.senderIdentityId, waiting });
 
     if (room > 0) {
       // A campaign with an AI template sends what the AI writes for each person: write the next few openings first (no-op otherwise).
@@ -926,8 +519,8 @@ async function dispatchCampaignsInOrg(ctx: WorkContext): Promise<number> {
       queued += await dispatchCampaign(tenant, ctx.kms, {
         orgId: campaign.orgId, campaignId: campaign.id,
         senderIdentityId: campaign.senderIdentityId, body: campaign.body, limit: room,
-        identicalBodyCap: ctx.limits.identicalBodyCap ?? Number.MAX_SAFE_INTEGER,
-        gateOverrides: campaign.gateOverrides, advisory
+        identicalBodyCap: ctx.identicalBodyCap ?? Number.MAX_SAFE_INTEGER,
+        gateOverrides: campaign.gateOverrides
       });
     }
     await tenant((tx) => reconcileCampaign(tx, campaign.orgId, campaign.id));
@@ -962,51 +555,6 @@ export async function sweepKeyRotation(ctx: WorkContext, batch = 100): Promise<n
     ctx.logger.info({ moved, unreadable }, 'key rotation: re-encrypted a batch onto the current key');
   }
   return moved;
-}
-
-/** When the restriction sweep last ran in this process; it is a minutes-scale signal, not a seconds one. */
-let lastRestrictionSweep = 0;
-
-/**
- * Runs the silent-restriction detector over every linked number, at most once per
- * `restrictionSweepEveryMs` (default one minute). A number with too little recent traffic simply
- * classifies as `ok`, so this is cheap on an idle install.
- */
-export async function sweepRestriction(ctx: WorkContext): Promise<number> {
-  const counts = await inEachOrg(ctx, (c) => sweepRestrictionInOrg(c));
-  return counts.reduce((a, b) => a + b, 0);
-}
-
-/** One org's share of `sweepRestriction`, run with a context already pinned to that org. */
-async function sweepRestrictionInOrg(ctx: WorkContext): Promise<number> {
-  const every = ctx.restrictionSweepEveryMs ?? 60_000;
-  const now = Date.now();
-  // `now >= last` guard: if the clock has moved backwards (a simulation restarting its timeline, or a
-  // clock correction) the throttle must reset, not wait for the old time to be reached again.
-  if (now >= lastRestrictionSweep && now - lastRestrictionSweep < every) return 0;
-  lastRestrictionSweep = now;
-
-  const rows = await ctx.db.execute(sql`
-    SELECT id FROM sender_identity WHERE status IN ('active', 'degraded')`);
-  let changed = 0;
-  for (const r of rows as unknown as Array<{ id: string }>) {
-    try {
-      const outcome = await checkRestriction(ctx.db, r.id);
-      if (outcome?.changed) {
-        changed += 1;
-        ctx.logger.warn(
-          { senderId: r.id, from: outcome.from, to: outcome.to, signals: outcome.signals.map((s) => s.id) },
-          'restriction state changed'
-        );
-      }
-    } catch (error) {
-      ctx.logger.error(
-        { senderId: r.id, err: error instanceof Error ? error.message : String(error) },
-        'restriction check failed'
-      );
-    }
-  }
-  return changed;
 }
 
 /** A tenant-scoped runner for the gateway, which has no request to take one from. */
@@ -1045,25 +593,11 @@ export async function sweepPendingWork(ctx: WorkContext): Promise<{ links: numbe
   const sends = (sendRows as unknown as Array<{ id: string }>).map((r) => r.id);
   for (const id of sends) await handleSend(ctx, id);
 
-  // Re-score sender health on the same cadence as the queue, so a number that has started to
-  // struggle is degraded or quarantined — and a recovered one restored to active — before the
-  // next batch of campaign sends is queued against it.
-  await inEachOrg(ctx, (c) => scoreConnectedSenders(c.db));
-
   // A key rotation in progress (D-31): a small batch per sweep, never in the way of a send.
   await sweepKeyRotation(ctx);
 
-  // Silent-restriction detection: delivery evidence per number, on its own (slower) cadence.
-  await sweepRestriction(ctx);
-
-  // Read receipts that have come due (human-like read delay, active hours only).
-  await sweepReadReceipts(ctx);
-
-  // Idle-time presence noise, so a number is not only ever active when a send is queued.
-  await sweepEntropy(ctx);
-
-  // After sending, not before: a campaign tops the queue up with whatever allowance is left
-  // once this sweep's sends have been accounted for.
+  // After sending, not before: a campaign tops the queue up with whatever room the policy gives
+  // once this sweep's sends have gone.
   await dispatchCampaigns(ctx);
 
   return { links: links.length, sends: sends.length };
@@ -1087,7 +621,7 @@ export async function restoreSessions(
   const perOrg = await inEachOrg(ctx, async (c) => (await c.db.execute(sql`
     SELECT si.id, si.phone_e164 AS phone FROM sender_identity si
     WHERE si.provider IN (${sql.join(providers.map((p) => sql`${p}`), sql`, `)})
-      AND si.status IN ('active','degraded','quarantined')`)) as unknown as Array<{ id: string; phone: string | null }>);
+      AND si.status = 'active'`)) as unknown as Array<{ id: string; phone: string | null }>);
   const senders = perOrg.flat();
 
   let restored = 0;
@@ -1179,20 +713,11 @@ async function applyConnectionEventInOrg(
   const alreadyLoggedOut = unlinkRow?.previous === 'logged_out';
 
   await ctx.db.execute(sql`
-    INSERT INTO channel_session (sender_identity_id, connection_state, disconnect_reason,
-                                 disconnect_code, reconnect_attempts, last_connected_at)
-    VALUES (${event.senderId}, ${event.state}, ${event.reason}, ${event.code ?? null}::int,
-            ${event.state === 'open' ? 0 : event.state === 'closed' ? 1 : 0}, ${openedAt})
+    INSERT INTO channel_session (sender_identity_id, connection_state, disconnect_reason, last_connected_at)
+    VALUES (${event.senderId}, ${event.state}, ${event.reason}, ${openedAt})
     ON CONFLICT (sender_identity_id) DO UPDATE
       SET connection_state = ${event.state},
           disconnect_reason = ${event.reason},
-          -- The raw close code and the number of closes in a row feed the health score (401/403/463/429
-          -- weights, reconnect churn). An open clears the run; a close extends it.
-          disconnect_code = CASE WHEN ${event.state} = 'open' THEN NULL ELSE ${event.code ?? null}::int END,
-          reconnect_attempts = CASE
-            WHEN ${event.state} = 'open' THEN 0
-            WHEN ${event.state} = 'closed' THEN channel_session.reconnect_attempts + 1
-            ELSE channel_session.reconnect_attempts END,
           last_connected_at = COALESCE(${openedAt}, channel_session.last_connected_at),
           updated_at = now()`);
 
@@ -1220,9 +745,8 @@ async function applyConnectionEventInOrg(
     // kept answering NO_ACTIVE_SENDER.
     await ctx.db.execute(sql`
       UPDATE sender_identity
-      SET status = 'active', warmup_started_at = COALESCE(warmup_started_at, now()),
-          updated_at = now()
-      WHERE id = ${event.senderId} AND status IN ('linking', 'degraded')`);
+      SET status = 'active', updated_at = now()
+      WHERE id = ${event.senderId} AND status = 'linking'`);
 
     // Record the number this connection belongs to, so a linked number is not left reading "no number
     // yet". Only fills a blank (a number someone typed in stays as typed), and only when no other number
@@ -1242,7 +766,7 @@ async function applyConnectionEventInOrg(
     // Terminal: the number was unlinked from the phone. Say so rather than leaving it looking
     // active, which would keep the dispatcher queueing sends that can never leave. Deliberately
     // *not* auto-retired: a genuine 401 ban and a user-initiated unlink look identical at the
-    // socket, and retiring a number the operator just unlinked would be wrong (docs/08-antiban.md).
+    // socket, and retiring a number the operator just unlinked would be wrong.
     await ctx.db.execute(sql`
       UPDATE sender_identity SET status = 'linking', updated_at = now()
       WHERE id = ${event.senderId}`);
@@ -1299,29 +823,10 @@ async function applyConnectionEventInOrg(
     }
   }
 
-  // Layer 6: a typed reachout-timelock (463) or rate overlimit (429) starts a timed recovery — a
-  // pause then a ramped-back cap. `beginRecovery` is a no-op if the number is already cooling off,
-  // so a burst of the same disconnect does not perpetually reset the pause (docs/08-antiban.md).
-  const incident = recoveryIncidentFor(event.reason);
-  if (incident !== null) {
-    await beginRecovery(ctx.db, event.senderId, incident, event.at);
-    ctx.logger.warn(
-      { senderId: event.senderId, reason: event.reason, incident },
-      'recovery opened for connection incident'
-    );
-  }
-
   ctx.logger.info(
     { senderId: event.senderId, state: event.state, reason: event.reason },
     'connection state changed'
   );
-}
-
-/** Maps a disconnect reason to the recovery incident it triggers, or null when it triggers none. */
-function recoveryIncidentFor(reason: NormalisedConnectionEvent['reason']): RecoveryIncident | null {
-  if (reason === 'reachout_timelock') return 'timelock_463';
-  if (reason === 'rate_limited') return 'rate_429';
-  return null;
 }
 
 /**

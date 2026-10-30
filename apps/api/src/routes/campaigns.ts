@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { sql } from 'drizzle-orm';
 import {
-  campaignProgress, previewAudience, forecast, POLICY_GATES,
+  campaignProgress, previewAudience, POLICY_GATES,
   createCampaignDraft, startCampaign as startCampaignRun, setCampaignStatus, editCampaign, type ActionContext,
   storeCampaignPicture, listCampaignPictures, CampaignPictureError, GifConversionError
 } from '@crm/core';
@@ -62,10 +62,10 @@ const listRecipientsQuery = z.object({
  * Campaigns — a bulk send, and the controls for stopping one.
  *
  * **Creating a campaign sends nothing.** It is a draft until started, starting only freezes the
- * audience, and the gateway converts recipients into messages at whatever rate the anti-ban
- * ceiling allows. Nothing in this router can make a message go out faster (M12).
+ * audience, and the gateway converts recipients into messages a small batch at a time. Nothing in this
+ * router can make a message go out faster (M12).
  */
-export function campaignsRouter(limits: { perMinute: number; perDay: number }, storage: StorageDriver): Router {
+export function campaignsRouter(storage: StorageDriver): Router {
   const router = Router();
 
   /**
@@ -135,10 +135,6 @@ export function campaignsRouter(limits: { perMinute: number; perDay: number }, s
 
   /**
    * Starts a campaign: freezes the audience and lets the gateway begin.
-   *
-   * The forecast comes back with it, because **how long this will take is a fact the operator
-   * needs at the moment of starting**, not afterwards. A 5,000-person campaign on a number
-   * that is four days old is a months-long proposition, and that should never be a surprise.
    */
   router.post('/:id/start', requireUuidParam('id'), requireScope('messages:send'),
     async (req: Request, res: Response) => {
@@ -159,7 +155,7 @@ export function campaignsRouter(limits: { perMinute: number; perDay: number }, s
       }
 
       const result = await req.tenant!((tx) => startCampaignRun(
-        tx, orgId, actionContext(req), id, limits,
+        tx, orgId, actionContext(req), id,
         overrideGates.length > 0 ? { gates: overrideGates, reason: startBody.data.reason! } : undefined
       ));
 
@@ -223,29 +219,15 @@ export function campaignsRouter(limits: { perMinute: number; perDay: number }, s
                  c.created_at AS "createdAt", c.gate_overrides AS "gateOverrides",
                  c.gate_override_reason AS "gateOverrideReason", c.pause_reason AS "pauseReason",
                  c.media_asset_id AS "mediaAssetId", ma.filename AS "mediaFilename",
-                 ma.content_type AS "mediaContentType", ma.size_bytes AS "mediaSizeBytes",
-                 si.warmup_started_at AS "warmupStartedAt",
-                 si.daily_cap_override AS "dailyCapOverride",
-                 si.last_inbound_at AS "lastInboundAt"
+                 ma.content_type AS "mediaContentType", ma.size_bytes AS "mediaSizeBytes"
           FROM campaign c
-          JOIN sender_identity si ON si.id = c.sender_identity_id
           LEFT JOIN media_asset ma ON ma.id = c.media_asset_id AND ma.org_id = c.org_id
           WHERE c.id = ${id} AND c.org_id = ${orgId}`);
         const campaign = (rows as unknown as Array<Record<string, unknown>>)[0];
         if (!campaign) return null;
 
         const progress = await campaignProgress(tx, orgId, id);
-        const outlook = await forecast(tx, campaign.senderIdentityId as string, progress.pending, {
-          perMinute: limits.perMinute, perDay: limits.perDay,
-          dailyCapOverride: campaign.dailyCapOverride as number | null,
-          warmupStartedAt: campaign.warmupStartedAt === null
-            ? null : new Date(campaign.warmupStartedAt as string),
-          lastInboundAt: campaign.lastInboundAt === null
-            ? null : new Date(campaign.lastInboundAt as string)
-        });
-        // The sender's pacing state fed the forecast; it is not the caller's business.
-        const { warmupStartedAt: _w, dailyCapOverride: _d, lastInboundAt: _l, ...rest } = campaign;
-        return { ...rest, progress, forecast: outlook };
+        return { ...campaign, progress };
       });
 
       if (data === null) {
@@ -256,8 +238,8 @@ export function campaignsRouter(limits: { perMinute: number; perDay: number }, s
     });
 
   /**
-   * A dry run: the audience a draft *would* freeze, and how long it would take — without writing
-   * anything (F5 AC-1). This is the number an operator needs **before** pressing start, not after.
+   * A dry run: the audience a draft *would* freeze, without writing anything (F5 AC-1). This is the
+   * number an operator needs **before** pressing start, not after.
    * Reachable vs unreachable is split out so a low reachable count (a tag of contacts with no
    * numbers) is visible up front rather than a surprise in the results.
    */
@@ -268,29 +250,13 @@ export function campaignsRouter(limits: { perMinute: number; perDay: number }, s
 
       const data = await req.tenant!(async (tx) => {
         const rows = await tx.execute(sql`
-          SELECT c.status, c.sender_identity_id AS "senderIdentityId",
-                 si.warmup_started_at AS "warmupStartedAt",
-                 si.daily_cap_override AS "dailyCapOverride",
-                 si.last_inbound_at AS "lastInboundAt"
-          FROM campaign c
-          JOIN sender_identity si ON si.id = c.sender_identity_id
+          SELECT c.status FROM campaign c
           WHERE c.id = ${id} AND c.org_id = ${orgId}`);
-        const campaign = (rows as unknown as Array<{
-          status: string; senderIdentityId: string;
-          warmupStartedAt: string | null; dailyCapOverride: number | null; lastInboundAt: string | null;
-        }>)[0];
+        const campaign = (rows as unknown as Array<{ status: string }>)[0];
         if (!campaign) return null;
 
         const audience = await previewAudience(tx, orgId, id);
-        // Only the reachable contacts would actually be messaged, so that is what the forecast paces.
-        const outlook = await forecast(tx, campaign.senderIdentityId, audience.reachable, {
-          perMinute: limits.perMinute, perDay: limits.perDay,
-          dailyCapOverride: campaign.dailyCapOverride,
-          warmupStartedAt: campaign.warmupStartedAt === null
-            ? null : new Date(campaign.warmupStartedAt),
-          lastInboundAt: campaign.lastInboundAt === null ? null : new Date(campaign.lastInboundAt)
-        });
-        return { status: campaign.status, audience, forecast: outlook };
+        return { status: campaign.status, audience };
       });
 
       if (data === null) {

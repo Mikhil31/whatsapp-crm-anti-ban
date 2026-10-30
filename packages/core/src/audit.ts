@@ -144,10 +144,8 @@ export const AUDIT = {
   campaignCancelled: 'campaign.cancelled',
   // Its name or wording was changed while it was a draft or paused.
   campaignEdited: 'campaign.edited',
-  // An admin knowingly lifting recipient-experience gates for one campaign, and switching a number
-  // between enforcing the anti-ban engine and advisory mode (D-29). Both carry a reason.
+  // An admin knowingly lifting recipient-experience gates for one campaign, with a reason.
   campaignGatesOverridden: 'campaign.gates_overridden',
-  senderEnforcementChanged: 'sender.enforcement_changed',
   senderRemoved: 'sender.removed',
   tagDeleted: 'tag.deleted',
   // Do-not-contact: flagging someone, and an admin knowingly messaging a flagged contact anyway.

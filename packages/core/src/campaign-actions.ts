@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm';
 import type { Transaction } from '@crm/db';
 import { AUDIT, writeAudit, type AuditActor } from './audit.js';
-import { campaignProgress, forecast, snapshotAudience, type CampaignForecast, type CampaignProgress } from './campaigns.js';
+import { campaignProgress, snapshotAudience, type CampaignProgress } from './campaigns.js';
 import type { PolicyGate } from './policy-gates.js';
 
 /**
@@ -37,9 +37,6 @@ export interface NewCampaign extends CampaignAudience {
   /** A stored campaign picture or GIF sent with every message; must be one of the org's campaign pictures. */
   readonly mediaAssetId?: string | undefined;
 }
-
-/** The sender's ceilings, for the forecast shown when a campaign starts. */
-export interface CampaignLimits { readonly perMinute: number; readonly perDay: number }
 
 /** Creates a draft. Nothing is sent and no audience is frozen until it is started. */
 export async function createCampaignDraft(
@@ -93,24 +90,23 @@ export async function createCampaignDraft(
   return { id };
 }
 
-/** The outcome of starting: how far along it is, and how long the rest will take. */
-export interface StartedCampaign { readonly progress: CampaignProgress; readonly outlook: CampaignForecast }
+/** The outcome of starting: how far along it is. */
+export interface StartedCampaign { readonly progress: CampaignProgress }
 
 /**
  * Starts a draft, or resumes a paused campaign: freezes the audience (first start only) and lets the gateway begin.
  *
- * The forecast comes back with it, because how long this will take is a fact the operator needs at the moment of
- * starting. Lifting policy gates is an admin's decision made by the caller: pass `override` only for a signed-in admin
+ * Lifting policy gates is an admin's decision made by the caller: pass `override` only for a signed-in admin
  * (the assistant never does).
  */
 export async function startCampaign(
-  tx: Transaction, orgId: string, ctx: ActionContext, id: string, limits: CampaignLimits,
+  tx: Transaction, orgId: string, ctx: ActionContext, id: string,
   override?: { gates: readonly PolicyGate[]; reason: string }
 ): Promise<StartedCampaign | { error: 'not_found' | 'already_running' | 'finished' }> {
   const rows = await tx.execute(sql`
-    SELECT status, sender_identity_id AS "senderIdentityId" FROM campaign
+    SELECT status FROM campaign
     WHERE id = ${id} AND org_id = ${orgId} FOR UPDATE`);
-  const campaign = (rows as unknown as Array<{ status: string; senderIdentityId: string }>)[0];
+  const campaign = (rows as unknown as Array<{ status: string }>)[0];
   if (!campaign) return { error: 'not_found' };
   if (campaign.status === 'running') return { error: 'already_running' };
   if (campaign.status === 'completed' || campaign.status === 'cancelled') return { error: 'finished' };
@@ -136,23 +132,12 @@ export async function startCampaign(
   }
 
   const progress = await campaignProgress(tx, orgId, id);
-  const senderLimits = await tx.execute(sql`
-    SELECT warmup_started_at AS "warmupStartedAt", daily_cap_override AS "dailyCapOverride", last_inbound_at AS "lastInboundAt"
-    FROM sender_identity WHERE id = ${campaign.senderIdentityId} AND org_id = ${orgId}`);
-  const s = (senderLimits as unknown as Array<{
-    warmupStartedAt: string | null; dailyCapOverride: number | null; lastInboundAt: string | null;
-  }>)[0]!;
-  const outlook = await forecast(tx, campaign.senderIdentityId, progress.pending, {
-    perMinute: limits.perMinute, perDay: limits.perDay, dailyCapOverride: s.dailyCapOverride,
-    warmupStartedAt: s.warmupStartedAt === null ? null : new Date(s.warmupStartedAt),
-    lastInboundAt: s.lastInboundAt === null ? null : new Date(s.lastInboundAt)
-  });
 
   await writeAudit(tx, {
     orgId, actor: ctx.actor, action: AUDIT.campaignStarted, targetType: 'campaign', targetId: id,
-    after: { ...progress, ...outlook }, ip: ctx.ip ?? null, requestId: ctx.requestId ?? null
+    after: { ...progress }, ip: ctx.ip ?? null, requestId: ctx.requestId ?? null
   });
-  return { progress, outlook };
+  return { progress };
 }
 
 /**

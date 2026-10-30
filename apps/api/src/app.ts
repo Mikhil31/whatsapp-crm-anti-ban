@@ -181,15 +181,14 @@ export function buildApp(deps: AppDependencies): Express & { aiRunner: AiJobRunn
   api.use(requireAuthenticated);
   api.use('/admin', adminRouter(deps.db, deps.hasher));
   api.use(requireTenant);
-  const aiLimits = { perMinute: deps.config.SEND_RATE_PER_MINUTE, perDay: deps.config.SEND_RATE_PER_DAY };
   // The model follows the AI settings tab: one wrapper for the whole process, re-reading the settings file when it changes.
   const liveLlm = new LiveLlm({ envFile: deps.config.LLM_ENV_FILE, base: deps.config, onError: (m) => { deps.logger.warn(m); } });
   const getLlm = (): LlmDriver => deps.llm ?? liveLlm;
   // Works through the AI queue. Started by the server (`start()`), not here, so tests make no background timers.
   const aiRunner = new AiJobRunner({
-    db: deps.db, tenantRole: deps.tenantRole, kms: deps.kms, getLlm, limits: aiLimits, logger: deps.logger
+    db: deps.db, tenantRole: deps.tenantRole, kms: deps.kms, getLlm, logger: deps.logger
   });
-  api.use('/ai', aiRouter(deps.db, deps.kms, getLlm, deps.tenantRole, aiLimits, aiRunner, {
+  api.use('/ai', aiRouter(deps.db, deps.kms, getLlm, deps.tenantRole, aiRunner, {
     live: liveLlm, envFile: deps.config.LLM_ENV_FILE, allowPrivate: deps.config.LLM_ALLOW_PRIVATE_BASE_URL, injected: deps.llm !== undefined
   }));
   api.use(withTenant(deps.db, deps.tenantRole));
@@ -202,9 +201,7 @@ export function buildApp(deps: AppDependencies): Express & { aiRunner: AiJobRunn
   api.use('/custom-fields', customFieldsRouter());
   api.use('/encryption', encryptionRouter({ kms: deps.kms }));
   api.use('/segments', segmentsRouter());
-  api.use('/campaigns', campaignsRouter({
-    perMinute: deps.config.SEND_RATE_PER_MINUTE, perDay: deps.config.SEND_RATE_PER_DAY
-  }, deps.storage));
+  api.use('/campaigns', campaignsRouter(deps.storage));
   api.use('/', messagesRouter(deps.kms, deps.config.DEFAULT_COUNTRY, deps.storage, ATTACHMENT_LIMIT_BYTES));
   app.use('/api/v1', api);
 

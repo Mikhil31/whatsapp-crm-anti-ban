@@ -43,7 +43,7 @@ export {
 
 export {
   createCampaignDraft, startCampaign, setCampaignStatus, editCampaign,
-  type ActionContext, type CampaignAudience, type NewCampaign, type CampaignLimits, type StartedCampaign
+  type ActionContext, type CampaignAudience, type NewCampaign, type StartedCampaign
 } from './campaign-actions.js';
 
 export {
@@ -67,20 +67,13 @@ export {
   type OutboundUpload, type IncomingMedia, type StoredMedia, type ResolvedMedia
 } from './media.js';
 
-export {
-  checkSendAllowance, dailyCeiling, humanDelayMs,
-  circadianActivity, circadianDelayMs, localHour, CIRCADIAN_QUIET_THRESHOLD,
-  RECONNECT_RAMP_MS, RECONNECT_PER_MINUTE,
-  type PacingLimits, type PacingDecision
-} from './pacing.js';
-
-export {
-  checkContactGraph, classifyRelationship, relationshipDelayMultiplier,
-  newContactDailyAllowance, DEFAULT_REPLY_FLOOR, type ReplyFloorConfig,
-  type Relationship, type ContactGraphLimits, type ContactGraphDecision
-} from './contact-graph.js';
-
 export { typingDelayMs } from './typing.js';
+
+export {
+  basicPolicy, makeBasicPolicy, BASIC_GAP_MIN_MS, BASIC_GAP_MAX_MS, BASIC_BATCH,
+  type AntiBanPolicy, type SendContext, type SendDecision, type BatchContext
+} from './antiban.js';
+export { recordHealthEvent } from './health-events.js';
 
 export { renderBody, resolveSpintax, fillVariables } from './body-variation.js';
 
@@ -89,35 +82,13 @@ export {
 } from './segments.js';
 
 export {
-  recoveryState, openRecovery, beginRecovery, isRecoveryIncident,
-  type RecoveryIncident, type RecoveryRow, type RecoveryState
-} from './recovery.js';
-
-export {
-  computeRiskScore, riskBand, nextStatus, deliveryRatio, deliveryDelayMultiplier,
-  scoreSenderHealth, scoreConnectedSenders,
-  type SenderStatus, type RiskBand, type HealthSignals, type HealthResult
-} from './health.js';
-
-export {
-  DecryptFailureTracker, markDecryptBurst, markOwnDecryptBurst, recordRetryRequest, decryptBurstIsLive,
-  DECRYPT_BURST_COUNT, DECRYPT_BURST_WINDOW_MS, DECRYPT_BURST_LIVE_MS
+  DecryptFailureTracker, markDecryptBurst, markOwnDecryptBurst, recordRetryRequest,
+  DECRYPT_BURST_COUNT, DECRYPT_BURST_WINDOW_MS
 } from './decrypt-failures.js';
 
 export {
   csvCell, csvHeader, csvLine, vcardEntry, fetchExportBatch, EXPORT_COLUMNS, type ExportRow
 } from './contact-export.js';
-
-export { timezoneForPhone, COUNTRY_TIMEZONES } from './recipient-timezone.js';
-
-export {
-  EntropyScheduler, entropyPlan, nextEntropyDelayMs, ENTROPY_MIN_INTERVAL_MS, ENTROPY_MAX_INTERVAL_MS,
-  type EntropyPlan, type Rng
-} from './entropy.js';
-
-export {
-  readDelayMs, readIsDue, READ_DELAY_MIN_MS, READ_DELAY_MAX_MS, READ_MAX_AGE_MS
-} from './read-receipts.js';
 
 export {
   runImport,
@@ -125,9 +96,9 @@ export {
 } from './ingestion.js';
 
 export {
-  campaignProgress, previewAudience, forecast, snapshotAudience, dispatchCampaign,
+  campaignProgress, previewAudience, snapshotAudience, dispatchCampaign,
   reconcileCampaign,
-  type CampaignProgress, type AudiencePreview, type CampaignForecast
+  type CampaignProgress, type AudiencePreview
 } from './campaigns.js';
 export {
   searchPredicate, resolveTarget, countMatching, bulkTag, bulkUntag, tagImportRun, ensureTag, deleteTag,
@@ -147,12 +118,6 @@ export {
   type LinkErrorInfo, type LinkErrorCode
 } from './link-errors.js';
 export { linkLidToPhone, type LinkOutcome } from './identity-linking.js';
-export {
-  classifyRestriction, nextRestrictionState, gatherRestrictionStats, checkRestriction, recordHealthEvent,
-  STUCK_AFTER_MS, HOLD_MS, MIN_SENDS,
-  type RestrictionState, type RestrictionStats, type RestrictionVerdict, type RestrictionSignal, type RestrictionOutcome
-} from './restriction.js';
-
 export {
   keyVersionCounts, versionsMissingFromKeyRing, reencryptBatch, verifySample, assertKeyRingCoversData,
   type KeyVersionCounts, type ReencryptResult, type VerifyResult, type SqlExecutor

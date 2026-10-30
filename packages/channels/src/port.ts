@@ -16,8 +16,6 @@ export interface ChannelCapabilities {
   readonly supportsMedia: boolean;
   /** Buttons, lists, carousels, flows. */
   readonly supportsInteractive: boolean;
-  /** Provider-imposed ceiling, separate from our own anti-ban limits. Null if none. */
-  readonly perSenderDailyCap: number | null;
   /** Whether messages cost money. Drives cost-aware routing between free and paid transports. */
   readonly costPerMessage: boolean;
 }
@@ -143,7 +141,7 @@ export interface ProviderHealth {
   readonly senderId: string;
   readonly state: 'connecting' | 'open' | 'closed' | 'logged_out';
   readonly lastConnectedAt: Date | null;
-  /** Typed disconnect reason — each carries its own backoff and risk weight (docs/08-antiban.md). */
+  /** Typed disconnect reason — each carries its own backoff. */
   readonly disconnectReason: DisconnectReason | null;
 }
 
@@ -230,8 +228,8 @@ export interface ChannelProvider {
   /**
    * Signals that a sender is `composing` (typing) to a recipient, or has `paused`.
    *
-   * Optional: a transport with no presence concept omits it. Used only by the anti-ban engine's
-   * typing simulation (docs/08-antiban.md, D-24) to make a send look human — an instant,
+   * Optional: a transport with no presence concept omits it. Used only by the typing
+   * simulation (D-24) to make a send look human — an instant,
    * zero-delay send is a bot tell — so it is cosmetic, never load-bearing. A failure here must
    * be swallowed by the caller and never fail the send it precedes.
    */
@@ -248,25 +246,6 @@ export interface ChannelProvider {
    * kind of pattern reported to get numbers restricted.
    */
   isRegistered?(sender: SenderRef, phoneE164: string): Promise<boolean | null>;
-
-  /**
-   * Sets the number's own presence — `available` (shows online) or `unavailable` — with no
-   * recipient. Optional and best-effort like `typing`; used only by the anti-ban background
-   * entropy (docs/08-antiban.md, Layer 3) to give an idle number human-shaped noise. Resolves
-   * false when the socket is not open.
-   */
-  presence?(sender: SenderRef, state: 'available' | 'unavailable'): Promise<boolean>;
-
-  /**
-   * Sends a read receipt (the blue ticks) for one inbound message. Resolves true when it was
-   * actually sent, false when it could not be (socket closed) so the caller leaves the message
-   * unread and tries again later rather than recording a receipt that never went out.
-   *
-   * Optional, and used only by the anti-ban read behaviour (docs/08-antiban.md, Layer 3): a real
-   * person reads a message minutes after it lands, so the gateway delays this rather than calling
-   * it on arrival. Cosmetic like `typing` — a failure must never affect anything else.
-   */
-  markRead?(sender: SenderRef, to: Recipient, providerMessageId: string): Promise<boolean>;
 
   /** Inbound messages, normalised. Consumed by the gateway and republished onto the queue. */
   inbound(): AsyncIterable<NormalisedInboundEvent>;

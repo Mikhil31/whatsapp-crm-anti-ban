@@ -32,9 +32,6 @@ const applyThemeBeforePaint =
 
 /** The root layout wrapping every page. */
 export default async function RootLayout({ children }: { children: ReactNode }) {
-  // How many numbers WhatsApp may be limiting, for the badge on "Numbers". Only when signed in, and
-  // never allowed to break a page: the badge is a convenience, the Numbers page is the source.
-  let alerts = 0;
   // Admins get a Team tab; everyone else does not see it. The API refuses non-admins either way.
   let isAdmin = false;
   // What the pages below were rendered with, so an open page notices when a number's link state changes (R-017).
@@ -42,7 +39,6 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   if ((await cookies()).get('crm_session') !== undefined) {
     // Together, not one after the other: this runs before every page, so each saved round trip is felt on every click.
     const [senders, me] = await Promise.all([listSenders().catch(() => null), getMe().catch(() => null)]);
-    alerts = senders === null ? 0 : senders.filter((s) => s.restrictionState !== 'ok').length;
     isAdmin = me?.role === 'admin';
     signature = senders === null ? null : connectionSignature(senders);
   }
@@ -71,7 +67,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
           </div>
         )}
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-          <Nav alerts={alerts} isAdmin={isAdmin} />
+          <Nav isAdmin={isAdmin} />
           <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">{children}</div>
         </div>
       </body>
