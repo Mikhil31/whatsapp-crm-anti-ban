@@ -120,6 +120,13 @@ export default async function CampaignPage(
             </p>
           )}
 
+          {campaign.pauseReason === 'unlinked' && campaign.status === 'paused' && (
+            <p role="alert" className="mb-4 notice notice-warning">
+              Paused automatically: the sending number was removed under Linked devices on the phone. Link it
+              again on the Numbers page, then resume.
+            </p>
+          )}
+
           {campaign.gateOverrides.length > 0 && (
             <p className="mb-4 notice notice-warning">
               An admin lifted: {campaign.gateOverrides.map((g) => GATE_LABEL[g]?.split(' — ')[0] ?? g).join(', ')}

@@ -521,6 +521,25 @@ describe('link failures and stale sessions', () => {
     expect(n[0]!.n).toBe(1);
   });
 
+  it('calls a device removed on the phone an unlink, not a possible ban (R-017)', async () => {
+    const ctx = { db, provider: new FakeChannelProvider(), logger, decrypt: () => '',
+      limits: { perMinute: 1000, perDay: 10_000 } };
+    await db.execute(sql`INSERT INTO channel_session (sender_identity_id, connection_state) VALUES (${senderId}, 'open')`);
+
+    await applyConnectionEvent(ctx, {
+      senderId, state: 'logged_out', reason: 'logged_out', code: 401, detail: 'device_removed', at: new Date()
+    });
+
+    const kinds = (await db.execute(sql`
+      SELECT kind, severity FROM sender_health_event WHERE sender_identity_id = ${senderId}`)
+    ) as unknown as Array<{ kind: string; severity: string }>;
+    expect(kinds).toEqual([{ kind: 'unlinked_on_phone', severity: 'warning' }]);
+    const state = (await db.execute(sql`
+      SELECT connection_state AS s FROM channel_session WHERE sender_identity_id = ${senderId}`)
+    ) as unknown as Array<{ s: string }>;
+    expect(state[0]!.s).toBe('logged_out');
+  });
+
   it('clears the dead credentials when WhatsApp logs the number out', async () => {
     const authStore = new PostgresAuthStateStore(db, kms);
     await authStore.set(senderId, 'creds', new TextEncoder().encode('revoked'));

@@ -157,14 +157,29 @@ function RemoveNumber({ sender }: { sender: Sender }) {
  * We cannot tell a ban from an unlink, only the phone can, so the banner's job is to send the operator
  * there before they relink, and to say the campaigns were stopped. Shown while the event is recent and
  * the number has not connected since.
+ *
+ * A `device_removed` stream error is the exception: WhatsApp saying the device was taken off the phone's
+ * Linked devices list. That is an unlink, so it gets a calm warning instead of the ban alarm (R-017).
  */
 function BanSuspicionBanner({ sender, events }: { sender: Sender; events: HealthEvent[] }) {
-  const hit = events.find((e) => e.kind === 'forbidden_suspected' || e.kind === 'hard_ban_suspected');
+  const hit = events.find((e) => e.kind === 'forbidden_suspected' || e.kind === 'hard_ban_suspected' || e.kind === 'unlinked_on_phone');
   if (!hit) return null;
   const at = new Date(hit.at).getTime();
   const connectedSince = sender.connectionState === 'open'
     && sender.lastConnectedAt !== null && new Date(sender.lastConnectedAt).getTime() > at;
   if (connectedSince || Date.now() - at > 3 * 24 * 60 * 60 * 1000) return null;
+  if (hit.kind === 'unlinked_on_phone') {
+    return (
+      <div role="status" className="mt-3 notice notice-warning text-[13px]">
+        <p className="font-semibold">Unlinked from the phone</p>
+        <p className="mt-1">
+          Link it again once, from this page. If the phone shows a ban notice instead, stop and do not relink.
+        </p>
+        <p className="mt-1 text-muted">{hit.summary}</p>
+        <p className="mt-1 text-[11px] text-muted">{new Date(hit.at).toLocaleString()}</p>
+      </div>
+    );
+  }
   const refused = hit.kind === 'forbidden_suspected';
   return (
     <div role="alert" className="mt-3 notice notice-danger text-[13px]">

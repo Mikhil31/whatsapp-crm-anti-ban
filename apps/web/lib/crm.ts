@@ -300,7 +300,7 @@ export interface CampaignDetail {
   /** Recipient-experience gates an admin lifted for this campaign, and why. */
   gateOverrides: string[];
   gateOverrideReason: string | null;
-  /** Set when the system, not a person, paused it (`restriction_likely` or `ban_suspected`). */
+  /** Set when the system, not a person, paused it (`restriction_likely`, `ban_suspected` or `unlinked`). */
   pauseReason: string | null;
   /** The picture or GIF sent with every message (the body is its caption), or null for a text-only campaign. */
   mediaAssetId: string | null;

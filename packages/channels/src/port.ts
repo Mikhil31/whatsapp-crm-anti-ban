@@ -179,6 +179,11 @@ export interface NormalisedConnectionEvent {
   /** The provider's raw close code (WhatsApp: 401, 403, 428, 463, …), when it gave one. */
   readonly code?: number | null;
   /**
+   * What the provider said about why, when it said more than a code (WhatsApp: the stream error's
+   * `<conflict type='device_removed'/>` child, as `device_removed`). Tells an unlink on the phone from a ban.
+   */
+  readonly detail?: string | null;
+  /**
    * The phone number the connection belongs to (E.164), reported on open when the transport knows it.
    * Lets the app fill in a number's own phone after linking instead of showing "no number yet".
    */

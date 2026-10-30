@@ -4,6 +4,8 @@ import { cookies } from 'next/headers';
 import { Inter } from 'next/font/google';
 import { Nav } from './nav';
 import { NavProgress } from './nav-progress';
+import { ConnectionWatch } from '@/components/connection-watch';
+import { connectionSignature } from '@/lib/connection-signature';
 import { listSenders, getMe } from '@/lib/crm';
 import './globals.css';
 
@@ -35,11 +37,14 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   let alerts = 0;
   // Admins get a Team tab; everyone else does not see it. The API refuses non-admins either way.
   let isAdmin = false;
+  // What the pages below were rendered with, so an open page notices when a number's link state changes (R-017).
+  let signature: string | null = null;
   if ((await cookies()).get('crm_session') !== undefined) {
     // Together, not one after the other: this runs before every page, so each saved round trip is felt on every click.
     const [senders, me] = await Promise.all([listSenders().catch(() => null), getMe().catch(() => null)]);
     alerts = senders === null ? 0 : senders.filter((s) => s.restrictionState !== 'ok').length;
     isAdmin = me?.role === 'admin';
+    signature = senders === null ? null : connectionSignature(senders);
   }
 
   // An optional line across the top of every page, set with ENVIRONMENT_BANNER (for example on a test or
@@ -59,6 +64,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
       </head>
       <body className="flex h-screen flex-col overflow-hidden antialiased" suppressHydrationWarning>
         <NavProgress />
+        {signature !== null && <ConnectionWatch signature={signature} />}
         {banner !== '' && (
           <div role="status" className="notice notice-warning shrink-0 rounded-none border-x-0 border-t-0 py-1.5 text-center text-sm">
             {banner}
