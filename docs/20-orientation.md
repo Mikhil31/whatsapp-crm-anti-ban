@@ -54,7 +54,7 @@ Build phases, in [`17-roadmap.md`](17-roadmap.md). The order work happens in.
 | **P3** | **Channels — the Baileys adapter. First code that touches WhatsApp** | **done** — link, send, receive, media all verified |
 | **P4** | Inbox (the screen agents use) | mostly (search + realtime left) |
 | **P5** | Data import (spreadsheets and other sources) | first slice (CSV + Excel) |
-| **P6** | The anti-ban engine | **✅ complete** — all six layers, plus an offline simulation (`npm run test:sim`) |
+| **P6** | The anti-ban engine | **replaced** — the first engine was removed on 2026-10-30; a placeholder policy (a 3 to 8 second gap, a batch of 20) is in until the new one lands |
 | P7 | Campaigns | first slice |
 | P8–P12 | Official Meta API, public API, automation, hardening, release | not started |
 
@@ -234,24 +234,15 @@ codes, order updates, anything a client sees) goes through the paid official cha
 outreach goes through Baileys, wrapped in the safety engine described in
 [`08-antiban.md`](08-antiban.md).
 
-**What that engine actually does, in plain terms** — six layers, all built, all at the one point
-every message passes through (plus human touches: typing, delayed read receipts, idle presence, and
-respecting the *recipient's* day too):
+**What is in place now, in plain terms** — the first engine was removed and the new one is pending. Every message passes one
+point, which for now does two things:
 
-1. **Warmup** — a brand-new number starts slow (about 20 messages the first day) and speeds up
-   over a week, like a real new account, instead of blasting on day one.
-2. **Rate limits** — hard caps per minute, hour and day, so it can never send too fast.
-3. **Jitter** — a random, human-like pause before each message, never a robotic fixed interval.
-4. **Circadian pacing** — it follows a day/night rhythm: busy in the daytime, silent overnight.
-   A number that messages at 3 a.m. looks like a bot.
-5. **Contact-graph gates** — it messages people who have replied at full speed, goes slower with
-   strangers, and caps how many brand-new strangers it starts messaging per day. Cold-blasting a
-   list is the fastest way to get banned.
-6. **Health scoring** — it watches how the number is doing (are messages being delivered? did
-   sends fail? did the connection drop badly?) and automatically slows down or pauses a number
-   that looks in trouble — and lets it recover when things improve.
+1. **A gap** — a random 3 to 8 second pause between two sends from the same number, never a robotic fixed interval.
+2. **A small batch** — a campaign puts at most 20 messages per number in the send queue at a time.
 
-**That engine reduces the risk. It cannot remove it.** Never point this at a number you cannot
+Typing ("typing…" before each send), do-not-contact and the other protections for the people being messaged stay as they were.
+
+**Nothing here removes the risk.** Never point this at a number you cannot
 afford to lose.
 
 ---

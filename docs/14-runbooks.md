@@ -7,28 +7,20 @@ Format: Symptom · Impact · Diagnose · Fix · Prevent.
 
 ---
 
-## RB-01 · Sender risk Critical / number quarantined
+## RB-01 · WhatsApp refused or logged out the number
 
-**Impact** All outbound on that number is stopped. Campaigns using it are paused.
+**Impact** The number cannot send. Its running campaigns were paused by the gateway, and nothing resumes them on its own.
 
-**Diagnose**
-```
-GET /api/v1/senders/{id}/health      # risk score + contributing events
-```
-Look at `send_risk_event` for the last 24 h. The score is a sum of typed events — identify
-which dominate: repeated 403s, a delivery collapse, or accumulated disconnects.
+**Diagnose** The Numbers page shows the banner and the timeline entry (`forbidden_suspected` for a 403, `hard_ban_suspected` for a
+logout nobody asked for, `unlinked_on_phone` when the device was removed under Linked devices; that last one is an unlink, not a ban).
+`GET /api/v1/senders/{id}/health-events` returns the same list.
 
 **Fix**
-1. **Do not** clear the quarantine and resume. That is how a soft ban becomes a hard one.
-2. Follow the recovery schedule in [`08-antiban.md`](08-antiban.md) for the incident class —
-   463 timelock: 24 h pause then 10%; rate overlimit: 4 h then 25%; suspected soft ban:
-   48 h then 5%.
-3. Check whether a campaign targeted cold contacts, or whether the reply ratio collapsed.
-4. If a 401 logged-out: the number is gone. Retire the sender; do not re-link and resume the
-   same behaviour.
+1. Open WhatsApp on the phone that owns the number and look for an "account banned" or "temporarily banned" notice. If there is one, stop: do not relink, and follow the notice to appeal.
+2. If there is no notice, someone unlinked the device: link it again once, from the Numbers page, then resume the campaigns.
+3. If a 401 logged the number out and it is gone, retire it; do not relink and resume the same behaviour.
 
-**Prevent** Lower the daily cap; increase the stranger multiplier; audit the segment that
-preceded it. A number reaching Critical is nearly always a targeting problem, not a technical one.
+**Prevent** Target people who expect the message. A ban is nearly always a targeting problem, not a technical one.
 
 ---
 
@@ -76,11 +68,10 @@ described in [`08-antiban.md`](08-antiban.md) is very hard to reverse once start
 ## RB-04 · Queue depth > 10,000 / jobs ageing
 
 **Diagnose** `GET /api/v1/admin/queues`. Distinguish **backlog** (workers too slow or stopped)
-from **deliberate pacing** (the anti-ban limiter holding sends back — which is correct and
-expected during a large campaign).
+from **the gap between sends** (the anti-ban policy spaces them out by a few seconds, so a large campaign drains slowly).
 
 **Fix** If the send queue is deep but jobs are being consumed slowly, that is the engine doing
-its job — **do not "fix" it by raising limits**. If workers are dead, restart. If a poison job
+its job. If workers are dead, restart. If a poison job
 is cycling, check the DLQ (RB-05).
 
 **Prevent** Alert on job *age* rather than depth alone; depth is expected to be large during
@@ -207,7 +198,7 @@ not sufficient to recover.
 **Symptom:** the Linked numbers page says *Linked*, the gateway log says `connected`, but no new inbound messages are stored, and a message you
 send to a contact stays at *sent* (no delivered or read tick). The gateway log is full of `failed to decrypt message` with
 `No matching sessions found for message`, `Key used already or never filled` or `Message counter error`, and `decrypt-failure burst: companion
-session looks diverged`; it keeps logging `sent retry receipt`. The number's health goes to *Degraded*.
+session looks diverged`; it keeps logging `sent retry receipt`.
 
 **Impact:** customers' messages are lost to the CRM (they stay on the phone). Sending still works for contacts whose session is fine.
 
@@ -225,16 +216,8 @@ session looks diverged`; it keeps logging `sent retry receipt`. The number's hea
    device). This always works: after it, zero decrypt failures and messages arrived at once. Conversations and contacts stay; messages that arrived
    while it was broken are not recovered into the CRM.
 
-**Related, the false quarantine:** the burst of decrypt failures after a restart (and messages the recipient's phone could not read counting as undelivered) can make the health scorer put the number in
-*quarantined* with a 48-hour soft-ban pause, which holds every send. For a test number an admin can turn **Advisory mode** on (Linked numbers → the number → *Advisory mode…*, with a reason; the audit log records it);
-sends then go out and the gateway logs `advisory mode: sending past an anti-ban hold`. Turn it back to enforcing afterwards. Never do this on a number you cannot afford to lose.
-
 **"Waiting for this message" on the other phone:** the recipient could not decrypt something we sent and asks for it again. The gateway answers that for text (`resending a message the recipient could not decrypt`). Before the resend hook the log
 said `recv retry request, but message not available` and the placeholder never cleared.
 
 **Prevent:** `dev-up.sh` no longer runs the gateway under `tsx watch` (since 2026-10-23; `--watch-gateway` brings the old behaviour back for a laptop with no real number linked). Do not restart the gateway while testing real numbers; after changing gateway or `packages/core` code, stop and start the script. (Before that, under `tsx watch` every saved edit to a file it imports restarted it.) Restart only the API
 and web with `bash infra/scripts/dev-up.sh --no-gateway`. Never run two gateways on one number. Tracked as D-82 (flush auth state on shutdown; detect the burst and say so on the page).
-
-## A number is delayed, stuck or silently restricted
-
-See [`27-restriction-tracking.md`](27-restriction-tracking.md): how it is detected, what the system does on its own, and the steps to take.

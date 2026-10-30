@@ -4,7 +4,7 @@
 
 What belongs where. Empty placeholder packages (worker, sdk, a separate antiban package, the
 Meta channel, ingestion connectors, unused provider drivers) were removed on 2026-10-26; the
-anti-ban engine lives in `packages/core`.
+anti-ban policy lives in `packages/core`.
 
 ```
 apps/
@@ -17,7 +17,7 @@ packages/
   db/         Drizzle schema, migrations, repositories, RLS helpers.
   core/       Domain logic — contacts, conversations, campaigns, policy, dispatcher.
               May import PORTS; may never import a concrete adapter.
-              Includes the anti-ban engine (pacing, health, contact-graph, recovery...).
+              Includes the anti-ban policy (antiban.ts).
   baileys/    Vendored Baileys 7.0.0-rc14 source (WhatsApp Web client). Rebuild: npm run baileys:build.
   channels/   The ChannelProvider port.
     {baileys,fake}/
@@ -32,7 +32,6 @@ infra/
 tests/
   contract/   One conformance suite per port. Every adapter and driver must pass.
   e2e/        Playwright. Runs against all three presets.
-  simulation/ The virtual WhatsApp that bans you if you misbehave. Highest-value test here.
   fixtures/   Synthetic data generators. NEVER real PII (docs/00-prior-art.md, M19).
 
 docs/         The design. Start at docs/README or the table in ../README.md.
