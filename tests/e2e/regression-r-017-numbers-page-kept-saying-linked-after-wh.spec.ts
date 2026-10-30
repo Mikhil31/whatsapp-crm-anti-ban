@@ -24,8 +24,8 @@ async function seedLinked(sql: postgres.Sql, label: string): Promise<string> {
     SELECT m.org_id AS org FROM app_user u JOIN org_membership m ON m.user_id = u.id WHERE u.email = ${EMAIL}`;
   if (who === undefined) throw new Error('the test admin has no org');
   const [sender] = await sql`
-    INSERT INTO sender_identity (org_id, provider, label, status, warmup_started_at)
-    VALUES (${who.org}, 'baileys', ${label}, 'active', now()) RETURNING id`;
+    INSERT INTO sender_identity (org_id, provider, label, status)
+    VALUES (${who.org}, 'baileys', ${label}, 'active') RETURNING id`;
   await sql`
     INSERT INTO channel_session (sender_identity_id, connection_state, last_connected_at)
     VALUES (${sender!.id}, 'open', now())`;
@@ -39,7 +39,7 @@ async function seedLinked(sql: postgres.Sql, label: string): Promise<string> {
 async function dropLink(sql: postgres.Sql, senderId: string): Promise<void> {
   await sql`
     UPDATE channel_session SET connection_state = 'logged_out', disconnect_reason = 'logged_out',
-      disconnect_code = 401, updated_at = now()
+      updated_at = now()
     WHERE sender_identity_id = ${senderId}`;
   await sql`UPDATE sender_identity SET status = 'linking' WHERE id = ${senderId}`;
   await sql`DELETE FROM channel_auth_state WHERE sender_identity_id = ${senderId}`;
