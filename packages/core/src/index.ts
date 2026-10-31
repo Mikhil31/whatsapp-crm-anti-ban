@@ -86,6 +86,8 @@ export {
   type LaneCandidate, type StoredWarnings
 } from './antiban/lane-state.js';
 export { applyWhatsAppNotice, type WhatsAppNotice, type TimelockNotice, type CappingNotice } from './antiban/notices.js';
+export { laneView, type LaneView } from './antiban/lane-view.js';
+export { retryMessage, type MessageRetryOutcome } from './message-retry.js';
 export { computeEta, campaignEta, type Eta, type EtaDelay, type EtaInput, type EtaItem } from './antiban/eta.js';
 export { queueCampaignFollowUp } from './campaign-followup.js';
 export { recordHealthEvent } from './health-events.js';

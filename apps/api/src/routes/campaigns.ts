@@ -69,6 +69,8 @@ function campaignWarnings(body: string, aiTemplateId: string | null): Array<{ co
 const listRecipientsQuery = z.object({
   status: z.enum(['pending', 'queued', 'sent', 'failed', 'skipped']).optional(),
   q: z.string().trim().min(1).max(100).optional(),
+  /** Narrows to one reason code: why a recipient was skipped, is held, or failed (F6 AC-10.2). */
+  reason: z.string().trim().min(1).max(64).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   cursor: z.string().uuid().optional()
 });
@@ -256,7 +258,7 @@ export function campaignsRouter(storage: StorageDriver): Router {
 
   /**
    * When the campaign finishes, worked out from the gaps stored on its recipients (F6 S3): `finishAt`, how many go now and how many
-   * wait for WhatsApp's next reset (`goNow`, `afterReset`, `resetAt`), what the estimate rests on (`basis`: `quota` or `time_only`),
+   * wait for WhatsApp's next reset (`goNow`, `afterReset`, `resetAt`, and `goNowEndsAt`, when the part that goes now finishes), what the estimate rests on (`basis`: `quota` or `time_only`),
    * and why it moved (`delayedBy`: a reason and seconds each). No randomness: the same campaign gives the same answer.
    */
   router.get('/:id/eta', requireUuidParam('id'), requireScope('conversations:read'),
@@ -271,7 +273,7 @@ export function campaignsRouter(storage: StorageDriver): Router {
       res.json({
         data: {
           finishAt: eta.finishAt?.toISOString() ?? null, goNow: eta.goNow, afterReset: eta.afterReset,
-          resetAt: eta.resetAt?.toISOString() ?? null, basis: eta.basis, delayedBy: eta.delayedBy
+          resetAt: eta.resetAt?.toISOString() ?? null, goNowEndsAt: eta.goNowEndsAt?.toISOString() ?? null, basis: eta.basis, delayedBy: eta.delayedBy
         }
       });
     });
@@ -311,7 +313,9 @@ export function campaignsRouter(storage: StorageDriver): Router {
    * Every recipient of a started campaign is here in a terminal or pending state, never silently
    * absent: `sent`/`failed` with the message's own delivery status, `skipped` with the reason it
    * was not messaged (`dnc`, `cancelled`, unreachable). Filterable by status and searchable by the
-   * contact's name or number, so "who did this actually reach, and why not the rest?" is answerable.
+   * contact's name or number, so "who did this actually reach, and why not the rest?" is answerable. Each row carries the reason
+   * code (`reason`: skip reason, hold or failure), the hold's expected end, the provider's error text, the gap drawn for it and the ids
+   * a screen needs to act on it (F6 AC-10.2); `reason=` filters on that code and `reasons` lists the codes the campaign has.
    */
   router.get('/:id/recipients', requireUuidParam('id'), requireScope('conversations:read'),
     async (req: Request, res: Response) => {
@@ -323,9 +327,12 @@ export function campaignsRouter(storage: StorageDriver): Router {
       }
       const orgId = req.crm!.orgId;
       const id = String(req.params.id);
-      const { status, q, limit, cursor } = parsed.data;
+      const { status, q, reason, limit, cursor } = parsed.data;
       const like = q === undefined ? null : `%${q}%`;
       const statusFilter = status ?? null;
+      const reasonFilter = reason ?? null;
+      // Why a recipient is not simply sent: the reason it was skipped, the hold its message waits under, or why it failed.
+      const reasonOf = sql`coalesce(cr.skip_reason, CASE m.status WHEN 'queued' THEN m.hold_reason WHEN 'failed' THEN m.error_code END)`;
       const after = cursor ?? null;
 
       const result = await req.tenant!(async (tx) => {
@@ -334,19 +341,24 @@ export function campaignsRouter(storage: StorageDriver): Router {
           SELECT 1 FROM campaign WHERE id = ${id} AND org_id = ${orgId}`);
         if ((exists as unknown as unknown[]).length === 0) return null;
 
-        return tx.execute(sql`
+        const page = await tx.execute(sql`
           SELECT cr.id, cr.status, cr.skip_reason AS "skipReason",
                  cr.attempted_at AS "attemptedAt",
                  c.display_name AS "displayName",
                  m.status AS "messageStatus", m.hold_reason AS "holdReason",
+                 ${reasonOf} AS "reason", m.hold_until AS "holdUntil", m.error_code AS "errorCode", m.error_detail AS "errorDetail",
+                 cr.planned_gap_ms AS "plannedGapMs", cr.message_id AS "messageId", cr.contact_id AS "contactId",
+                 m.conversation_id AS "conversationId", v.sender_identity_id AS "senderIdentityId",
                  (SELECT ci.value_normalized FROM contact_identity ci
                   WHERE ci.contact_id = c.id AND ci.org_id = ${orgId}
                   ORDER BY ci.is_primary DESC LIMIT 1) AS "identity"
           FROM campaign_recipient cr
           JOIN contact c ON c.id = cr.contact_id AND c.org_id = ${orgId}
           LEFT JOIN message m ON m.id = cr.message_id
+          LEFT JOIN conversation v ON v.id = m.conversation_id
           WHERE cr.campaign_id = ${id} AND cr.org_id = ${orgId}
             AND (${statusFilter}::text IS NULL OR cr.status = ${statusFilter})
+            AND (${reasonFilter}::text IS NULL OR ${reasonOf} = ${reasonFilter})
             AND (${like}::text IS NULL
                  OR c.display_name ILIKE ${like}
                  OR EXISTS (SELECT 1 FROM contact_identity ci2
@@ -354,15 +366,22 @@ export function campaignsRouter(storage: StorageDriver): Router {
             AND (${after}::uuid IS NULL OR cr.id > ${after}::uuid)
           ORDER BY cr.id ASC
           LIMIT ${limit}`);
+        // The reasons present in the whole campaign, for the filter (first page only: the list does not change as you page).
+        const reasons = after !== null ? [] : await tx.execute(sql`
+          SELECT ${reasonOf} AS "reason", count(*)::int AS "count"
+          FROM campaign_recipient cr LEFT JOIN message m ON m.id = cr.message_id
+          WHERE cr.campaign_id = ${id} AND cr.org_id = ${orgId} AND ${reasonOf} IS NOT NULL
+          GROUP BY 1 ORDER BY 2 DESC, 1`);
+        return { page, reasons };
       });
 
       if (result === null) {
         res.status(404).json(problem(req, 404, 'NOT_FOUND', 'No such campaign.'));
         return;
       }
-      const data = result as unknown as Array<{ id: string }>;
+      const data = result.page as unknown as Array<{ id: string }>;
       const nextCursor = data.length === limit ? data[data.length - 1]!.id : null;
-      res.json({ data, nextCursor });
+      res.json({ data, nextCursor, reasons: result.reasons });
     });
 
   /** Lists campaigns, newest first. */

@@ -149,6 +149,8 @@ export const AUDIT = {
   senderRemoved: 'sender.removed',
   // An agent resumed a number's campaigns after the hold for messages not reaching people (F6 AC-4.7).
   senderResumed: 'sender.resumed',
+  // A person pressed Retry on a failed or refused message (F6 S10). The only way a failed message is sent again.
+  messageRetried: 'message.retried',
   // The org's sending settings: the closing message, the contact details it quotes, the stop and restart words (F6 AC-6.7).
   antibanSettingsChanged: 'antiban.settings_changed',
   tagDeleted: 'tag.deleted',

@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { sql } from 'drizzle-orm';
 import type { KmsDriver } from '@crm/kms-local';
-import { writeAudit, AUDIT, storeOutboundMedia, requestRead, markOptOut } from '@crm/core';
+import { writeAudit, AUDIT, storeOutboundMedia, requestRead, markOptOut, retryMessage, laneView } from '@crm/core';
 import type { StorageDriver } from '@crm/storage';
 import { auditActor, requireRole, requireScope } from '../auth.js';
 import { problem } from '../problem.js';
@@ -792,6 +792,44 @@ export function messagesRouter(
     });
 
   /**
+   * Puts a failed message back in the lane because a person pressed Retry (F6 S10). The only way a failed message is sent again: the
+   * engine never retries by itself (AC-1.9). It skips no check, so the message may fail or be held again. A failed or held 463
+   * refusal also lifts the hold on that contact. `{ data: { outcome } }`: `requeued`, `hold_lifted`; `409` for a message that is
+   * neither failed nor held by a 463. The thread lock applies as it does to a reply.
+   */
+  router.post('/messages/:id/retry', requireUuidParam('id'), requireScope('messages:send'),
+    async (req: Request, res: Response) => {
+      const orgId = req.crm!.orgId;
+      const id = String(req.params.id);
+      const result = await req.tenant!(async (tx) => {
+        const conv = (await tx.execute(sql`
+          SELECT v.id, v.assignee_user_id AS "assigneeUserId" FROM message m JOIN conversation v ON v.id = m.conversation_id
+          WHERE m.id = ${id} AND m.org_id = ${orgId} AND m.direction = 'outbound'`)) as unknown as Array<{ id: string; assigneeUserId: string | null }>;
+        if (conv.length === 0) return { notFound: true as const };
+        const ctx = req.crm!;
+        if (ctx.kind === 'session' && ctx.role !== 'admin' && conv[0]!.assigneeUserId !== null
+            && conv[0]!.assigneeUserId !== ctx.userId && !(await isParticipant(tx, conv[0]!.id, ctx.userId))) {
+          return { locked: true as const };
+        }
+        return retryMessage(tx, orgId, id, auditActor(req), { ip: req.ip ?? null, requestId: String(req.id) });
+      });
+      if ('notFound' in result || ('found' in result && !result.found)) {
+        res.status(404).json(problem(req, 404, 'NOT_FOUND', 'No such message.'));
+        return;
+      }
+      if ('locked' in result) {
+        res.status(409).json(problem(req, 409, 'THREAD_ASSIGNED',
+          'This thread is assigned to another agent. Reassign it to yourself, or ask an admin, to retry.'));
+        return;
+      }
+      if (result.outcome === 'not_retryable') {
+        res.status(409).json(problem(req, 409, 'NOT_RETRYABLE', 'Only a failed message, or one held after WhatsApp refused the contact, can be retried.'));
+        return;
+      }
+      res.json({ data: { outcome: result.outcome } });
+    });
+
+  /**
    * An agent marks a reply as an opt-out by hand, because the classifier missed it (F6 AC-6.8). The same effect as the contact sending
    * STOP: one closing message goes at reply priority, then the contact is on do-not-contact. Marking someone who has already opted out
    * changes nothing and sends nothing.
@@ -812,7 +850,9 @@ export function messagesRouter(
     const rows = await req.tenant!(async (tx) => {
       const found = await tx.execute(sql`
         SELECT m.id, m.direction, m.content_type AS "contentType", m.status,
-               m.error_code AS "errorCode", m.hold_reason AS "holdReason",
+               m.error_code AS "errorCode", m.error_detail AS "errorDetail", m.hold_reason AS "holdReason",
+               m.hold_until AS "holdUntil", m.planned_gap_ms AS "plannedGapMs", m.delivered_at AS "deliveredAt",
+               v.contact_id AS "contactId", v.sender_identity_id AS "senderIdentityId",
                m.retry_requests AS "retryRequests", m.last_retry_at AS "lastRetryAt",
                m.body_enc AS "bodyEnc", m.sent_by AS "sentBy",
                m.sent_by_user_id AS "sentByUserId", u.display_name AS "sentByName",
@@ -849,7 +889,15 @@ export function messagesRouter(
           RETURNING id`);
         if ((cleared as unknown as unknown[]).length > 0) await requestRead(tx, orgId, conversationId);
       }
-      return found;
+      // When the lane is due to send the message it takes next, so the thread can count down to it (F6 AC-10.1). Only that one message
+      // has a time; the rest of the queue is behind it, or held with a reason of its own.
+      const list = found as unknown as Array<{ id: string; direction: string; status: string; holdReason: string | null; senderIdentityId: string }>;
+      let head: { id: string | null; at: Date | null } = { id: null, at: null };
+      if (list.some((r) => r.direction === 'outbound' && r.status === 'queued' && r.holdReason === null)) {
+        const lane = await laneView(tx, list[0]!.senderIdentityId, new Date());
+        head = { id: lane.headMessageId, at: lane.nextSendAt };
+      }
+      return list.map((r) => ({ ...r, dueAt: r.id === head.id ? head.at?.toISOString() ?? null : null }));
     });
 
     const messages = (rows as unknown as Array<{

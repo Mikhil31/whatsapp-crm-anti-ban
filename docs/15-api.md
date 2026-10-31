@@ -89,7 +89,7 @@ document (templates, webhooks, policy delegation, the SDK, OpenAPI) is design, n
 | Admin | `POST /admin/orgs` · `POST/GET/DELETE /admin/keys` · `POST /admin/users` | `orgs` is bootstrap-key only; the rest an admin session |
 | Senders | `GET/POST /senders` · `POST/GET /senders/:id/link` · `POST /senders/:id/unlink` | Live connection state, health evidence, recovery state; link by QR or pairing code |
 | Inbox | `GET /conversations` (filters) · `GET/PATCH /conversations/:id` · `POST /conversations/:id/read` | Status, assignee, unread |
-| | `GET /conversations/:id/messages` | Bodies decrypted for display; carries `media` and `mediaUnavailable` |
+| | `GET /conversations/:id/messages` | Bodies decrypted for display; carries `media` and `mediaUnavailable`, and per message the `errorCode`/`errorDetail`, `holdReason`/`holdUntil`, `plannedGapMs`, `deliveredAt` and `dueAt` (set only on the message the lane sends next) |
 | | `GET/POST /conversations/:id/notes` | Team-only; never transmitted |
 | | `GET/POST /canned-replies` · `GET /users` | Saved replies; org members for the assignee picker |
 | Sending | `POST /messages` | **`{to \| conversationId, body, senderId?}`** → 202 (queued, not sent) |
@@ -102,7 +102,7 @@ document (templates, webhooks, policy delegation, the SDK, OpenAPI) is design, n
 | Import | `GET /imports` · `POST /imports` · `POST /imports/:id/run` · `GET /imports/:id` | Upload (`?force=true` to re-import) → dry run → commit |
 | Campaigns | `GET/POST /campaigns` · `GET /campaigns/:id` | Create a **draft** (sends nothing); detail with progress |
 | | `POST /campaigns/:id/start` · `/pause` · `/cancel` | Start freezes the audience; pause is instant |
-| | `GET /campaigns/:id/preview` · `GET /campaigns/:id/recipients` | Dry run before start; per-recipient results |
+| | `GET /campaigns/:id/preview` · `GET /campaigns/:id/recipients` | Dry run before start; per-recipient results (`reason`, `holdUntil`, `errorDetail`, `plannedGapMs` per row; `?reason=` filter; `reasons` lists the codes present; `limit`/`cursor` page) |
 | | `GET /campaigns/:id/eta` | When it finishes, from the gaps stored at launch (see below) |
 
 All paths are under `/api/v1` except the health checks.
@@ -220,13 +220,14 @@ qualifies). Errors use the problem shape above.
 | `POST /campaigns/:id/start` | `messages:send` | Optional `overrideGates: [dnc\|engagement\|cooldown\|duplicate_campaign]` + `reason` (admin only, audited) |
 | `GET /campaigns/:id` | `conversations:read` | Now includes `gateOverrides`, `gateOverrideReason`, `pauseReason` |
 | `GET /senders/:id/health-events` | `senders:read` | The number's timeline (refused connections, logouts nobody asked for, devices removed on the phone), newest first |
-| `GET /senders` | `senders:read` | `id`, `label`, `provider`, `phoneE164`, `status`, `connectionState`, `linked`, `linkError`, and what WhatsApp last said about the number's limits (`timelockActive`, `timelockUntil`, `timelockType`, `cappingStatus`, `cappingTotalQuota`, `cappingUsedQuota`, `cappingCycleEnd`, `linkedSince`) with `hints` (advice only: `new_number`, `use_phone_too`) |
+| `GET /senders` | `senders:read` | `id`, `label`, `provider`, `phoneE164`, `status`, `connectionState`, `linked`, `linkError`, and what WhatsApp last said about the number's limits (`timelockActive`, `timelockUntil`, `timelockType`, `cappingStatus`, `cappingTotalQuota`, `cappingUsedQuota`, `cappingCycleEnd`, `linkedSince`) with `hints` (advice only: `new_number`, `use_phone_too`) and `lane` (`{ waiting, nextSendAt, hold: { reason, until } \| null }`: how many messages wait, when the next one is due, and the hold that matters most; read-only, from the queue and the stored gaps) |
 | `POST /segments` | `contacts:write` | Now takes `saved` (default `true`); `false` makes a one-off inline audience that is not listed |
 | `PATCH /campaigns/:id` | `messages:send` | `{ name?, body?, mediaAfterReply? }`, only while the campaign is a draft or paused (`409 NOT_EDITABLE` otherwise) |
 | `POST /campaigns` | `messages:send` | Takes `purpose` (one sentence: why these people are messaged, said in the closing message if one opts out; `GET /campaigns/:id` returns it) and `mediaAfterReply` (default `true`: new chats get the text alone, the picture or link follows when they reply). The answer carries `warnings` (`no_variation` when the text has no `{a\|b}` choice and no AI writes it; the campaign can still launch) |
 | `GET /campaigns/:id` | `conversations:read` | Also `mediaAfterReply`, `aiTemplateId` and `warnings` |
-| `GET /campaigns/:id/eta` | `conversations:read` | `{ finishAt, goNow, afterReset, resetAt, basis: quota\|time_only, delayedBy: [{ reason: reply_priority\|timelock\|new_chat_cap\|quiet_hours, seconds }] }`. `finishAt` is null when nothing is left to send; `404` for a campaign that is not the caller's org's. No randomness: the same campaign gives the same answer |
+| `GET /campaigns/:id/eta` | `conversations:read` | `{ finishAt, goNow, afterReset, resetAt, goNowEndsAt, basis: quota\|time_only, delayedBy: [{ reason: reply_priority\|timelock\|new_chat_cap\|quiet_hours, seconds }] }`. `finishAt` is null when nothing is left to send; `404` for a campaign that is not the caller's org's. No randomness: the same campaign gives the same answer |
 | `GET/PUT /antiban/settings` | admin (session) | The org's sending settings: `closingMessageEnabled` (default `true`), `contactPhone`, `contactEmail`, `defaultPurpose` (all quoted in the closing message sent when someone opts out), `stopWords`, `restartWords` (lower-cased), `quietHours { enabled, start, end, timeZone }`. `PUT` takes any part (`422` for a bad email, time or zone). `missing` lists `contactPhone` / `contactEmail` when not set. Audited (`antiban.settings_changed`) |
+| `POST /messages/:id/retry` | `messages:send` | Puts a failed message back in the lane because a person asked; nothing retries by itself. A failed or held 463 refusal also lifts the hold on that contact. `{ data: { outcome: requeued\|hold_lifted } }`; `409 NOT_RETRYABLE` for anything else; the thread lock applies. Audited (`message.retried`) |
 | `POST /senders/:id/resume` | `senders:write` | Lifts the `many_undelivered` hold on the number's campaigns. `{ data: { resumed } }`, `false` when nothing was held. Only sends after this count toward holding it again. Audited |
 | `POST /conversations/:id/opt-out` | `conversations:write` | Marks a reply as an opt-out by hand: one closing message at reply priority, then do-not-contact (reason `opt_out`). `{ data: { alreadyOptedOut, closingMessageId } }`; a second call sends nothing |
 | `GET/PUT /ai/settings` | admin (session) | The AI assistant's switch, instructions, daily message limit, `mayStartCampaigns`, consent. `PUT` refuses to switch on until `acceptConsent` has been sent once (`422 AI_RULE`); creates the assistant's user the first time |

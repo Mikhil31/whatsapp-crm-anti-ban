@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { sql } from 'drizzle-orm';
-import { writeAudit, AUDIT, decodeLinkError, numberHints, resumeNumber } from '@crm/core';
+import { writeAudit, AUDIT, decodeLinkError, laneView, numberHints, resumeNumber } from '@crm/core';
 import { auditActor, requireRole, requireScope } from '../auth.js';
 import { problem } from '../problem.js';
 import { requireUuidParam } from '../params.js';
@@ -32,7 +32,9 @@ export function sendersRouter(): Router {
 
   /** Lists senders with their live connection state. */
   router.get('/', requireScope('senders:read'), async (req: Request, res: Response) => {
-    const rows = await req.tenant!((tx) => tx.execute(sql`
+    const now = new Date();
+    const { rows, lanes } = await req.tenant!(async (tx) => {
+    const rows = await tx.execute(sql`
       SELECT si.id, si.label, si.provider, si.phone_e164 AS "phoneE164", si.status,
              cs.connection_state AS "connectionState", cs.disconnect_reason AS "disconnectReason",
              cs.last_connected_at AS "lastConnectedAt",
@@ -49,16 +51,28 @@ export function sendersRouter(): Router {
       FROM sender_identity si
       LEFT JOIN channel_session cs ON cs.sender_identity_id = si.id
       WHERE si.org_id = ${req.crm!.orgId} AND si.status <> 'removed'
-      ORDER BY si.created_at ASC`));
+      ORDER BY si.created_at ASC`);
+    // What each number's lane is doing now (F6 AC-10.4), read from the queue and the gaps the engine stored. Changes nothing.
+    const lanes = new Map<string, Awaited<ReturnType<typeof laneView>>>();
+    for (const r of rows as unknown as Array<{ id: string }>) lanes.set(r.id, await laneView(tx, r.id, now));
+    return { rows, lanes };
+    });
 
-    const data = (rows as unknown as Array<Record<string, unknown> & { linkErrorRaw: string | null }>)
+    const data = (rows as unknown as Array<Record<string, unknown> & { id: string; linkErrorRaw: string | null }>)
       .map(({ linkErrorRaw, ...sender }) => ({
         ...sender,
+        lane: (() => {
+          const l = lanes.get(sender.id)!;
+          return {
+            waiting: l.waiting, nextSendAt: l.nextSendAt?.toISOString() ?? null,
+            hold: l.hold === null ? null : { reason: l.hold.reason, until: l.hold.until?.toISOString() ?? null }
+          };
+        })(),
         // Advice only, never blocking (F6 AC-7.6): a number linked in the last 7 days, a timelock that wants the phone used too.
         hints: numberHints({
           linkedSince: typeof sender.linkedSince === 'string' ? new Date(sender.linkedSince) : null,
           timelockType: typeof sender.timelockType === 'string' ? sender.timelockType : null,
-          now: new Date()
+          now
         }),
         // The last link failure, in plain words, so the Numbers page can say why a number is not up.
         linkError: decodeLinkError(linkErrorRaw)

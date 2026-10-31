@@ -35,6 +35,8 @@ export interface Eta {
   readonly afterReset: number;
   /** When WhatsApp's limit lifts (cap cycle end or timelock end), or null. */
   readonly resetAt: Date | null;
+  /** When the last of the messages that go in the current stretch is expected to go, or null when none go now. */
+  readonly goNowEndsAt: Date | null;
   /** `quota` when WhatsApp has told us how many new chats are left, `time_only` when it has not. */
   readonly basis: 'quota' | 'time_only';
   readonly delayedBy: EtaDelay[];
@@ -120,6 +122,7 @@ export function computeEta(input: EtaInput): Eta {
     delayedBy.push({ reason: 'reply_priority', seconds: Math.round((cursor.getTime() - before) / 1000) });
   }
   ({ end: cursor, lastSentAt: last } = play(goNow, cursor, last, factorOf, input.quietHours, quietWait));
+  const goNowEndsAt = goNow.length > 0 ? cursor : null;
 
   if (later.length > 0 && resetAt !== null) {
     const idle = Math.max(0, Math.round((resetAt.getTime() - cursor.getTime()) / 1000));
@@ -133,6 +136,7 @@ export function computeEta(input: EtaInput): Eta {
     finishAt: items.length === 0 ? null : cursor,
     goNow: goNow.length, afterReset: later.length,
     resetAt: later.length > 0 ? resetAt : null,
+    goNowEndsAt,
     basis: quotaKnown ? 'quota' : 'time_only',
     delayedBy
   };
