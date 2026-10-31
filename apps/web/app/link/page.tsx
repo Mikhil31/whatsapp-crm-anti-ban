@@ -6,6 +6,8 @@ import { AddNumber } from './add-number';
 import { PageHeader } from '../ui';
 import { ConfirmAction } from '@/components/confirm-action';
 import { removeSenderAction } from './actions';
+import { NumberLane } from '@/components/live-lines';
+import { AutoRefresh } from '../broadcast/auto-refresh';
 
 /** Rendered per request — linking state changes second by second. */
 export const dynamic = 'force-dynamic';
@@ -22,6 +24,7 @@ export default async function LinkPage(
 ) {
   // A number that was just added: its QR starts by itself.
   const { start } = await searchParams;
+  const serverNow = new Date().toISOString();
   let senders: Sender[] = [];
   const events = new Map<string, HealthEvent[]>();
   let isAdmin = false;
@@ -63,12 +66,15 @@ export default async function LinkPage(
 
       {failure !== null && <p className="notice notice-danger">{failure}</p>}
 
+      {/* The cards carry live lane state (next send, holds, warning level); re-read it every few seconds, and the seconds tick in between. */}
+      {failure === null && <AutoRefresh everyMs={5000} />}
+
       {failure === null && senders.length === 0 && (
         <AddNumber first />
       )}
 
       <ul className="grid items-start gap-4 lg:grid-cols-2">
-        {active.map((s) => <SenderCard key={s.id} sender={s} isAdmin={isAdmin} events={events.get(s.id) ?? []} autoStart={s.id === start} />)}
+        {active.map((s) => <SenderCard key={s.id} sender={s} isAdmin={isAdmin} events={events.get(s.id) ?? []} autoStart={s.id === start} serverNow={serverNow} />)}
       </ul>
 
       {previouslyLinked.length > 0 && (
@@ -88,7 +94,7 @@ export default async function LinkPage(
 }
 
 /** One number's card: its label and live state, what has happened to it, and the link/unlink panel. */
-function SenderCard({ sender, isAdmin, events, autoStart = false }: { sender: Sender; isAdmin: boolean; events: HealthEvent[]; autoStart?: boolean }) {
+function SenderCard({ sender, isAdmin, events, autoStart = false, serverNow = '' }: { sender: Sender; isAdmin: boolean; events: HealthEvent[]; autoStart?: boolean; serverNow?: string }) {
   return (
     <li className="card p-5">
       <div className="flex items-start justify-between gap-3">
@@ -107,6 +113,16 @@ function SenderCard({ sender, isAdmin, events, autoStart = false }: { sender: Se
           {sender.connectionState === 'open' ? 'Linked' : sender.connectionState === 'connecting' ? 'Linking…' : 'Not linked'}
         </span>
       </div>
+      {sender.lane !== undefined && (sender.linked || sender.lane.waiting > 0 || sender.lane.hold !== null) && serverNow !== '' && (
+        <NumberLane
+          senderId={sender.id} lane={sender.lane} serverNow={serverNow}
+          quota={{
+            cappingStatus: sender.cappingStatus ?? null, cappingUsedQuota: sender.cappingUsedQuota ?? null,
+            cappingTotalQuota: sender.cappingTotalQuota ?? null, cappingCycleEnd: sender.cappingCycleEnd ?? null
+          }}
+          linkedSince={sender.linkedSince ?? null} hints={sender.hints ?? []}
+        />
+      )}
       <BanSuspicionBanner sender={sender} events={events} />
       <LinkFailureBanner sender={sender} />
       <HealthTimeline events={events} />

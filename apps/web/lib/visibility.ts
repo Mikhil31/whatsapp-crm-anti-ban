@@ -14,6 +14,7 @@ export function formatWait(ms: number): string {
   return `${String(Math.floor(total / 3600))} h ${String(Math.floor((total % 3600) / 60)).padStart(2, '0')} min`;
 }
 
+/** The zone times are shown in; absent means the viewer's own. */
 interface ZoneOption { readonly timeZone?: string }
 
 /** The calendar day of `at` in the zone, as `YYYY-MM-DD`. */
@@ -49,8 +50,10 @@ export interface MessageFacts {
   readonly dueAt: string | null;
 }
 
+/** The stops on a message's way out. */
 export type StepKey = 'queued' | 'waiting' | 'typing' | 'sent' | 'delivered' | 'read';
 
+/** One stop on the timeline, and whether the message has passed it, is at it, or has yet to reach it. */
 export interface TimelineStep {
   readonly key: StepKey;
   readonly label: string;
@@ -59,6 +62,7 @@ export interface TimelineStep {
   readonly at: string | null;
 }
 
+/** A message's road and where it stands. */
 export interface Timeline {
   readonly steps: TimelineStep[];
   /** `held`: queued with a reason. `failed`: it will not go. `in_flight`: moving along the steps. */
@@ -198,4 +202,11 @@ export function quotaLine(
     ? `${String(s.cappingUsedQuota)} of ${String(s.cappingTotalQuota)} new chats used` : null;
   const resets = s.cappingCycleEnd === null ? null : `resets at ${whenText(s.cappingCycleEnd, now, zone)}`;
   return { ...level, used, resets };
+}
+
+// ── The new-campaign form ────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+/** Whether campaign text has a `{a|b}` choice in it. The same test the server makes for its `no_variation` warning (AC-7.2). */
+export function hasVariation(body: string): boolean {
+  return /\{[^{}]*\|[^{}]*\}/.test(body);
 }

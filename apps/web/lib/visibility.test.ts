@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { etaLines, formatWait, laneLines, messageTimeline, quotaLine, type MessageFacts } from './visibility';
+import { etaLines, formatWait, hasVariation, laneLines, messageTimeline, quotaLine, type MessageFacts } from './visibility';
 
 const NOW = new Date('2026-10-31T10:00:00Z');
 const at = (s: number): string => new Date(NOW.getTime() + s * 1000).toISOString();
@@ -156,5 +156,14 @@ describe('AC-10.4 the number card', () => {
       .toMatchObject({ level: 'Capped', tone: 'danger', used: '50 of 50 new chats used', resets: null });
     expect(quotaLine({ cappingStatus: null, cappingUsedQuota: null, cappingTotalQuota: null, cappingCycleEnd: null }, NOW, tz))
       .toEqual({ level: 'No report from WhatsApp yet', tone: 'ok', used: null, resets: null });
+  });
+});
+
+describe('AC-7.2 the new-campaign form warns about text with no variation', () => {
+  it('knows a {a|b} choice from plain text and from a {{name}} placeholder', () => {
+    expect(hasVariation('{Hi|Hello} {{name}}')).toBe(true);
+    expect(hasVariation('Hi {{name}}, a message')).toBe(false);
+    expect(hasVariation('Hi there')).toBe(false);
+    expect(hasVariation('a | b')).toBe(false);
   });
 });

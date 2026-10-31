@@ -40,7 +40,9 @@ export function clockTime(at: Date | string, timeZone?: string): string {
   }).format(typeof at === 'string' ? new Date(at) : at);
 }
 
+/** Builds a sentence from the clock time and the provider's text, either of which may be missing. */
 type Make = (time: string | null, detail: string | null) => string;
+/** One code's sentence and the action that goes with it. */
 interface Entry { readonly say: Make; readonly action: ReasonAction | null }
 
 const BY_CODE: Record<string, Entry> = {
@@ -79,6 +81,12 @@ const BY_CODE: Record<string, Entry> = {
   no_whatsapp_number: { say: () => 'This contact has no phone number to send to.', action: null },
   own_number: { say: () => 'This is the number sending the message; WhatsApp cannot message itself.', action: null },
   empty_body: { say: () => 'The message has no text.', action: null },
+  // Why a campaign skipped a recipient before any message was made (the campaign page's table).
+  no_phone: { say: () => 'This contact has no phone number.', action: null },
+  cancelled: { say: () => 'The campaign was cancelled before this contact was reached.', action: null },
+  engaged: { say: () => 'An agent is in the middle of a conversation with this contact.', action: null },
+  cooldown: { say: () => 'This contact was sent a campaign within the last 14 days.', action: null },
+  in_other_campaign: { say: () => 'This contact is in another live campaign.', action: null },
   media_storage_unavailable: { say: () => 'The attached file could not be read from storage.', action: 'retry' }
 };
 

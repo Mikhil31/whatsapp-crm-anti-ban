@@ -9,7 +9,7 @@ import { initialsOf } from '../../ui';
 import { ThreadControls } from './thread-controls';
 import { PresenceBeat } from './presence-beat';
 import { ViewersLine } from './viewers-line';
-import { holdLabel } from '@/lib/hold-label';
+import { MessageTimeline } from '@/components/message-timeline';
 
 /** The time of day inside a bubble, like WhatsApp ("12:44 pm"); the full date is the day heading above and the hover text. */
 function timeOf(iso: string): string {
@@ -90,11 +90,8 @@ function Attachment({ message }: { message: Message }) {
  * is unambiguous in a way that two grey ticks is not.
  */
 function DeliveryState({ message }: { message: Message }) {
-  if (message.direction === 'inbound') return null;
-  const failed = message.status === 'failed';
-  // 'queued' is the one status people misread as done. It means the API accepted the message
-  // and nothing has left yet — so it is spelled out rather than shown as a bare word.
-  const queued = message.status === 'queued';
+  // A queued or failed message is shown by its timeline, with the reason and the action beside it.
+  if (message.direction === 'inbound' || message.status === 'queued' || message.status === 'failed') return null;
   // "sent" with no delivery after a while means the message is stuck, so say how long.
   // A message typed on the owner's phone may never report delivery to the CRM, so it is never flagged as stuck.
   const stuckHours = message.status === 'sent' && message.sentAt !== null && message.sentBy !== 'phone'
@@ -102,15 +99,13 @@ function DeliveryState({ message }: { message: Message }) {
   const stuck = stuckHours >= 0.5;
   // "delivered" only means WhatsApp's servers handed it to the recipient's device. A phone that could not decrypt it still shows
   // "Waiting for this message" and asks us to send it again; say so until the message has been read (D-101).
-  const unreadable = !failed && !queued && message.status !== 'read' && message.retryRequests > 0;
+  const unreadable = message.status !== 'read' && message.retryRequests > 0;
   return (
-    <span className={failed || queued || stuck || unreadable ? 'font-medium text-danger' : 'text-muted'}>
+    <span className={stuck || unreadable ? 'font-medium text-danger' : 'text-muted'}>
       {' · '}
-      {queued ? `⚠ waiting: ${holdLabel(message.holdReason)}`
-        : unreadable ? `⚠ ${message.status}, but the other phone could not read it yet (it asked for it again ${String(message.retryRequests)} ${message.retryRequests === 1 ? 'time' : 'times'})`
+      {unreadable ? `⚠ ${message.status}, but the other phone could not read it yet (it asked for it again ${String(message.retryRequests)} ${message.retryRequests === 1 ? 'time' : 'times'})`
         : stuck ? `sent · no delivery for ${stuckHours >= 1 ? `${String(Math.floor(stuckHours))}h` : `${String(Math.round(stuckHours * 60))}m`}`
         : message.status}
-      {message.errorCode !== null && ` (${message.errorCode})`}
     </span>
   );
 }
@@ -132,7 +127,7 @@ function authorLabel(message: Message): string | null {
 }
 
 /** One message bubble: attachment, body (or a decryption note), and the delivery state line. */
-function MessageBubble({ message }: { message: Message }) {
+function MessageBubble({ message, serverNow }: { message: Message; serverNow: string }) {
   const author = authorLabel(message);
   return (
     <div
@@ -161,6 +156,17 @@ function MessageBubble({ message }: { message: Message }) {
         <span title={stamp(message.createdAt)}>{timeOf(message.createdAt)}</span>
         <DeliveryState message={message} />
       </p>
+      {message.direction === 'outbound' && (
+        <MessageTimeline
+          messageId={message.id} serverNow={serverNow}
+          target={{ senderId: message.senderIdentityId ?? null, contactId: message.contactId ?? null, conversationId: null }}
+          facts={{
+            status: message.status, holdReason: message.holdReason, holdUntil: message.holdUntil ?? null, errorCode: message.errorCode,
+            errorDetail: message.errorDetail ?? null, createdAt: message.createdAt, sentAt: message.sentAt,
+            deliveredAt: message.deliveredAt ?? null, readAt: message.readAt, dueAt: message.dueAt ?? null
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -190,6 +196,7 @@ function NoteBubble({ note }: { note: Note }) {
  */
 export default async function ThreadPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const serverNow = new Date().toISOString();
 
   let messages: Message[] = [];
   let notes: Note[] = [];
@@ -304,7 +311,7 @@ export default async function ThreadPage({ params }: { params: Promise<{ id: str
                     <div className="flex justify-center"><NoteBubble note={entry.item} /></div>
                   ) : (
                     <div className={entry.item.direction === 'outbound' ? 'flex justify-end' : 'flex justify-start'}>
-                      <MessageBubble message={entry.item} />
+                      <MessageBubble message={entry.item} serverNow={serverNow} />
                     </div>
                   )}
                 </li>

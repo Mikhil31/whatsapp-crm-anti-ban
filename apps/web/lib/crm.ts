@@ -73,8 +73,20 @@ export interface Message {
   contentType: string;
   status: string;
   errorCode: string | null;
+  /** The provider's own words when the send failed (`errorCode` `send_error`). */
+  errorDetail?: string | null;
   /** For a still-queued outbound message: why the gateway is holding it (`sender_not_connected`…). */
   holdReason: string | null;
+  /** When that hold is expected to lift, or null when it waits for something. */
+  holdUntil?: string | null;
+  /** The gap drawn for this message after the previous send from its number, in ms. */
+  plannedGapMs?: number | null;
+  deliveredAt?: string | null;
+  /** When the lane is due to send it. Set only on the message the lane takes next. */
+  dueAt?: string | null;
+  /** For acting on a hold or failure: the contact (to lift do-not-contact) and the number (to resume or relink). */
+  contactId?: string;
+  senderIdentityId?: string;
   /** How many times the recipient's phone asked for this message again because it could not decrypt it ("Waiting for this message"). */
   retryRequests: number;
   lastRetryAt: string | null;
@@ -155,6 +167,19 @@ export interface Sender {
   connectionState: 'open' | 'connecting' | 'closed' | null;
   disconnectReason: string | null;
   lastConnectedAt: string | null;
+  /** What WhatsApp last said about the number's limits (F6 S2), and when the number was linked. */
+  timelockActive?: boolean;
+  timelockUntil?: string | null;
+  timelockType?: string | null;
+  cappingStatus?: string | null;
+  cappingTotalQuota?: number | null;
+  cappingUsedQuota?: number | null;
+  cappingCycleEnd?: string | null;
+  linkedSince?: string | null;
+  /** Advice only, never blocking (F6 AC-7.6). */
+  hints?: Array<{ code: string; text: string }>;
+  /** What the number's lane is doing now (F6 AC-10.4): messages waiting, when the next goes, and what is held back. */
+  lane?: { waiting: number; nextSendAt: string | null; hold: { reason: string; until: string | null } | null };
   /**
    * Whether credentials are stored — the truth of "is this number linked", independent of the
    * live socket. Drives the Unlink button (nothing to unlink when false) and sorts an unlinked
@@ -250,6 +275,11 @@ export interface CampaignDetail {
   mediaFilename: string | null;
   mediaContentType: string | null;
   mediaSizeBytes: number | null;
+  /** Why these people are messaged, said in the closing message if one of them opts out. */
+  purpose?: string | null;
+  mediaAfterReply?: boolean;
+  /** Things worth knowing that never stop it launching (`no_variation`). */
+  warnings?: Array<{ code: string; message: string }>;
 }
 
 /** The prospective audience of a draft — a dry run's counts. Mirrors the `preview` route. */
@@ -284,6 +314,48 @@ export interface CampaignRecipient {
   holdReason?: string | null;
   /** The contact's primary phone or email, for identifying them in the list. */
   identity: string | null;
+  /** Why it is not simply sent: the skip reason, the hold its message waits under, or why it failed (F6 AC-10.2). */
+  reason?: string | null;
+  holdUntil?: string | null;
+  errorCode?: string | null;
+  errorDetail?: string | null;
+  /** The gap drawn for this recipient at launch, in ms. */
+  plannedGapMs?: number | null;
+  messageId?: string | null;
+  contactId?: string;
+  conversationId?: string | null;
+  senderIdentityId?: string | null;
+}
+
+/** A page of a campaign's recipients, with the reasons the whole campaign has (first page only). */
+export interface RecipientPage {
+  data: CampaignRecipient[];
+  nextCursor: string | null;
+  reasons: Array<{ reason: string; count: number }>;
+}
+
+/** When a campaign finishes. Mirrors `GET /api/v1/campaigns/:id/eta`. */
+export interface CampaignEta {
+  finishAt: string | null;
+  goNow: number;
+  afterReset: number;
+  resetAt: string | null;
+  goNowEndsAt: string | null;
+  basis: 'quota' | 'time_only';
+  delayedBy: Array<{ reason: string; seconds: number }>;
+}
+
+/** The org's sending settings. Mirrors `GET /api/v1/antiban/settings`. */
+export interface AntiBanSettings {
+  closingMessageEnabled: boolean;
+  contactPhone: string | null;
+  contactEmail: string | null;
+  defaultPurpose: string | null;
+  stopWords: string[];
+  restartWords: string[];
+  quietHours: { enabled: boolean; start: string; end: string; timeZone: string };
+  /** Contact details the closing message is still without (`contactPhone`, `contactEmail`). */
+  missing: string[];
 }
 
 /** What the API returns when a request fails: RFC 7807, plus our stable `code`. */
@@ -1207,19 +1279,36 @@ export async function previewCampaign(id: string): Promise<CampaignPreview> {
 }
 
 /**
- * Lists a campaign's recipients — the per-recipient results. `status` narrows to one state and
- * `q` searches the contact's name or number. Returns the first page; keyset paging is a follow-up.
+ * Lists a page of a campaign's recipients — the per-recipient results. `status` narrows to one state, `reason` to one reason code,
+ * and `q` searches the contact's name or number. `cursor` is the `nextCursor` of the page before.
  */
 export async function listCampaignRecipients(
-  id: string, opts: { status?: string; q?: string } = {}
-): Promise<CampaignRecipient[]> {
+  id: string, opts: { status?: string; reason?: string; q?: string; cursor?: string; limit?: number } = {}
+): Promise<RecipientPage> {
   const params = new URLSearchParams();
   if (opts.status !== undefined && opts.status !== '') params.set('status', opts.status);
+  if (opts.reason !== undefined && opts.reason !== '') params.set('reason', opts.reason);
   if (opts.q !== undefined && opts.q.trim() !== '') params.set('q', opts.q.trim());
+  if (opts.cursor !== undefined && opts.cursor !== '') params.set('cursor', opts.cursor);
+  if (opts.limit !== undefined) params.set('limit', String(opts.limit));
   const qs = params.toString();
-  return request<CampaignRecipient[]>(
-    `/campaigns/${encodeURIComponent(id)}/recipients${qs === '' ? '' : `?${qs}`}`
-  );
+  const auth = await forwardedAuth();
+  const response = await fetch(`${baseUrl()}/api/v1/campaigns/${encodeURIComponent(id)}/recipients${qs === '' ? '' : `?${qs}`}`, {
+    cache: 'no-store', headers: { 'Content-Type': 'application/json', ...auth }
+  });
+  if (response.status === 401) throw new NotAuthenticatedError();
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const problem = payload as Partial<ApiProblem> | null;
+    throw new CrmApiError({ code: problem?.code ?? 'UNKNOWN', detail: problem?.detail ?? `The API returned ${String(response.status)}.`, status: response.status });
+  }
+  const body = payload as { data: CampaignRecipient[]; nextCursor: string | null; reasons?: RecipientPage['reasons'] };
+  return { data: body.data, nextCursor: body.nextCursor, reasons: body.reasons ?? [] };
+}
+
+/** When a campaign finishes, worked out from the gaps stored on its recipients. */
+export async function getCampaignEta(id: string): Promise<CampaignEta> {
+  return request<CampaignEta>(`/campaigns/${encodeURIComponent(id)}/eta`);
 }
 
 /** A picture or GIF stored for campaigns. Mirrors `GET /api/v1/campaigns/media`. */
@@ -1266,7 +1355,13 @@ export type CampaignTarget =
  * Throws `CrmApiError` (`NOT_FOUND`) if the sender or the tag does not belong to the org.
  */
 export async function createCampaign(
-  input: { name: string; body: string; senderIdentityId: string; aiTemplateId?: string; mediaAssetId?: string } & CampaignTarget
+  input: {
+    name: string; body: string; senderIdentityId: string; aiTemplateId?: string; mediaAssetId?: string;
+    /** Why these people are messaged, in a sentence. */
+    purpose?: string;
+    /** A picture or link goes after the first reply to a new chat (on by default). */
+    mediaAfterReply?: boolean;
+  } & CampaignTarget
 ): Promise<{ id: string; status: string }> {
   return request<{ id: string; status: string }>('/campaigns', {
     method: 'POST', body: JSON.stringify(input)
@@ -1311,4 +1406,27 @@ export async function getImportProblems(id: string): Promise<ImportProblems> {
     errors?: ImportProblems['errors']; warnings?: ImportProblems['warnings'];
   }>(`/imports/${encodeURIComponent(id)}`);
   return { errors: run.errors ?? [], warnings: run.warnings ?? [] };
+}
+
+/** Puts a failed message back in the lane. Only ever called from a person's click: nothing retries by itself. */
+export async function retryMessage(messageId: string): Promise<{ outcome: 'requeued' | 'hold_lifted' }> {
+  return request<{ outcome: 'requeued' | 'hold_lifted' }>(`/messages/${encodeURIComponent(messageId)}/retry`, { method: 'POST' });
+}
+
+/** Lifts the hold on a number's campaigns raised because many messages were not reaching people. */
+export async function resumeSender(senderId: string): Promise<{ resumed: boolean }> {
+  return request<{ resumed: boolean }>(`/senders/${encodeURIComponent(senderId)}/resume`, { method: 'POST' });
+}
+
+/** The org's sending settings (admin only). */
+export async function getAntiBanSettings(): Promise<AntiBanSettings> {
+  return request<AntiBanSettings>('/antiban/settings');
+}
+
+/** Changes any part of the org's sending settings (admin only). */
+export async function saveAntiBanSettings(patch: {
+  closingMessageEnabled?: boolean; contactPhone?: string | null; contactEmail?: string | null; defaultPurpose?: string | null;
+  quietHours?: { enabled?: boolean; start?: string; end?: string; timeZone?: string };
+}): Promise<AntiBanSettings> {
+  return request<AntiBanSettings>('/antiban/settings', { method: 'PUT', body: JSON.stringify(patch) });
 }

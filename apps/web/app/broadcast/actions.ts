@@ -84,6 +84,9 @@ export async function createCampaignAction(formData: FormData): Promise<void> {
   const fromImportRunId = String(formData.get('fromImportRunId') ?? '');
   const fromSegmentId = String(formData.get('fromSegmentId') ?? '');
   const mediaAssetId = String(formData.get('mediaAssetId') ?? '');
+  const purpose = String(formData.get('purpose') ?? '').trim();
+  // A checkbox sends nothing when it is off; off is a choice, so it is sent as false.
+  const mediaAfterReply = formData.get('mediaAfterReply') === 'on';
 
   // Inline audience: a filter built right in the form. It becomes a segment (so it is resolved and
   // frozen at launch like any other audience); `keepAudience` decides whether it is listed for reuse.
@@ -122,7 +125,10 @@ export async function createCampaignAction(formData: FormData): Promise<void> {
 
   let id: string;
   try {
-    const created = await createCampaign({ name, body, senderIdentityId, ...(mediaAssetId !== '' ? { mediaAssetId } : {}), ...chosen[0]! });
+    const created = await createCampaign({
+      name, body, senderIdentityId, mediaAfterReply, ...(mediaAssetId !== '' ? { mediaAssetId } : {}),
+      ...(purpose !== '' ? { purpose } : {}), ...chosen[0]!
+    });
     id = created.id;
   } catch (error) {
     if (error instanceof NotAuthenticatedError) redirect('/login?next=/broadcast/new');

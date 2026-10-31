@@ -10,6 +10,7 @@ import { WriteWithAi } from './write-with-ai';
 import { PictureField } from './picture-field';
 import { TemplatePicker } from './template-picker';
 import { SubmitButton } from './submit-button';
+import { VariationWarning } from './variation-warning';
 
 /** Rendered per request — the sender and tag pickers reflect live data. */
 export const dynamic = 'force-dynamic';
@@ -117,6 +118,14 @@ export default async function NewCampaignPage(
                 identical sends.
               </span>
             </label>
+            <VariationWarning />
+            <label className="mt-4 flex flex-col gap-1.5">
+              <span className="text-sm font-medium">Why are you messaging these people? <span className="font-normal text-muted">(optional)</span></span>
+              <input name="purpose" maxLength={300} placeholder="e.g. you applied for the Pune driver job" className="field" />
+              <span className="text-sm text-muted">
+                If someone replies STOP, the closing message says this. Left empty, it uses the default on the Sending rules page.
+              </span>
+            </label>
             <div className="mt-4">
               <p className="mb-1.5 text-sm font-medium">Picture or GIF <span className="font-normal text-muted">(optional, one per campaign)</span></p>
               <p className="mb-2 text-sm text-muted">
@@ -124,6 +133,16 @@ export default async function NewCampaignPage(
               </p>
               <PictureField earlier={pictures} />
             </div>
+            <label className="mt-4 flex items-start gap-2">
+              <input type="checkbox" name="mediaAfterReply" defaultChecked className="mt-1" />
+              <span>
+                <span className="block text-sm font-medium">Send the text first, and the picture or link after they reply</span>
+                <span className="block text-sm text-muted">
+                  To someone who has never written to this number, a picture or link in the first message looks like a bulk send. People
+                  you already talk to get everything at once.
+                </span>
+              </span>
+            </label>
           </section>
 
           <section className="card p-5">

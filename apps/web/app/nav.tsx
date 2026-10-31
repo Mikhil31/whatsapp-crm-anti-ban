@@ -64,6 +64,10 @@ const TABS: Tab[] = [
     icon: <Icon><rect x="4" y="8" width="16" height="11" rx="3" /><path d="M12 8V4.5M9 13.5h.01M15 13.5h.01M9.5 16.5h5" /></Icon>
   },
   {
+    href: '/sending', label: 'Sending rules', adminOnly: true,
+    icon: <Icon><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></Icon>
+  },
+  {
     href: '/security', label: 'Security',
     icon: <Icon><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></Icon>
   },

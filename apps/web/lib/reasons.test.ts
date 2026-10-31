@@ -109,6 +109,12 @@ describe('reason codes (F6 S10)', () => {
     expect(describeReason('no_whatsapp_number').known).toBe(true);
   });
 
+  it('AC-10.2 the reasons a campaign skips a recipient read as sentences too', () => {
+    for (const code of ['no_phone', 'cancelled', 'engaged', 'cooldown', 'in_other_campaign']) {
+      expect(describeReason(code).known).toBe(true);
+    }
+  });
+
   it('clockTime gives HH:MM in the zone asked for', () => {
     expect(clockTime(UNTIL, 'UTC')).toBe('14:20');
     expect(clockTime('2026-10-31T09:05:00Z', 'Asia/Kolkata')).toBe('14:35');
