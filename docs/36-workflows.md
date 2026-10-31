@@ -57,7 +57,7 @@ flowchart TD
   K --> L[Preview from a safe re-encoded thumbnail]
   L --> M[Create the draft with media_asset_id]
   M --> N[An admin presses Start: audience is frozen]
-  N --> O[Gateway sweep: dispatchCampaign claims pending recipients with SKIP LOCKED, up to the anti-ban policy's batch and within the identical-body cap]
+  N --> O[Gateway sweep: dispatchCampaign claims pending recipients with SKIP LOCKED, up to the anti-ban policy's batch]
   O --> P[Each recipient gets a message row: image or video, the file, the caption]
   P --> Q{handleSend gates:<br/>do-not-contact, number connected, the anti-ban policy}
   Q -- held --> R[Stays queued with the reason, retried by the sweep]
@@ -189,4 +189,4 @@ flowchart TD
 
 ## AI campaigns: who writes the first message
 
-A campaign made from an AI template (AI page → "Message a group") does not send its typed text. The gateway asks the AI to write one opening per person from the template's instructions, the person's name and stored columns, and the typed text as an outline. Only people with an opening are queued, and the AI's text is what goes out; the rest of the pipeline (the anti-ban policy, do-not-contact, identical-body check) is unchanged. If the AI is off, or no model is set, those campaigns wait. After three failed writes a person is skipped as `ai_opening_failed`. Code: `packages/core/src/ai-opening.ts`, `dispatchCampaign`, `apps/gateway/src/work.ts`.
+A campaign made from an AI template (AI page → "Message a group") does not send its typed text. The gateway asks the AI to write one opening per person from the template's instructions, the person's name and stored columns, and the typed text as an outline. Only people with an opening are queued, and the AI's text is what goes out; the rest of the pipeline (the anti-ban policy, do-not-contact) is unchanged. If the AI is off, or no model is set, those campaigns wait. After three failed writes a person is skipped as `ai_opening_failed`. Code: `packages/core/src/ai-opening.ts`, `dispatchCampaign`, `apps/gateway/src/work.ts`.

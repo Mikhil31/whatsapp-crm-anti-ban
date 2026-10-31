@@ -129,7 +129,6 @@ async function main(): Promise<void> {
   const ctx: WorkContext = {
     db, provider, logger, storage, tenantRole,
     decrypt: (cipher) => new TextDecoder().decode(kms.decrypt(cipher)),
-    identicalBodyCap: config.IDENTICAL_BODY_DAILY_CAP,
     // Make each send look human — a "typing…" beat before it lands (D-24).
     typingSimulation: config.SEND_TYPING_SIMULATION,
     verifyFallbackNumbers: config.SEND_VERIFY_FALLBACK_NUMBERS,

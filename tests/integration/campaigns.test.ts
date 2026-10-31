@@ -581,29 +581,6 @@ describe('the default batch in campaign dispatch', () => {
   });
 });
 
-describe('the identical-body guard (D-26 backstop)', () => {
-  it('caps identical bodies per window, but a varied body is never capped', async () => {
-    const capped: WorkContext = { ...gatewayCtx(), identicalBodyCap: 3 };
-
-    // A no-variation body: all eight recipients share one body, so only three go out this window.
-    const flat = await create(contactIds.slice(0, 8), 'exactly the same every time');
-    await request(app).post(`/api/v1/campaigns/${flat.body.data.id}/start`).set(...auth());
-    expect(await dispatchCampaigns(capped)).toBe(3);
-    const flatProg = await request(app).get(`/api/v1/campaigns/${flat.body.data.id}`).set(...auth());
-    expect(flatProg.body.data.progress).toMatchObject({ queued: 3, pending: 5 });
-
-    // A varied body ({{name}} renders eight distinct messages) is never capped — all eight queue.
-    const varied = await create(contactIds.slice(0, 8), 'Hi {{name}}, a word.');
-    // Same people as the campaign above, on purpose — so lift the two recipient-experience gates
-    // (cooldown, duplicate-campaign) that would otherwise skip them; this test is about the cap.
-    await db.execute(sql`
-      UPDATE campaign SET gate_overrides = ARRAY['cooldown', 'duplicate_campaign']
-      WHERE id = ${varied.body.data.id}`);
-    await request(app).post(`/api/v1/campaigns/${varied.body.data.id}/start`).set(...auth());
-    expect(await dispatchCampaigns(capped)).toBe(8);
-  });
-});
-
 /** A real small picture: a PNG, a GIF with two frames, and a JPEG, made on the spot. */
 async function pic(kind: 'png' | 'gif' | 'jpeg'): Promise<Buffer> {
   const sharp = (await import('sharp')).default;

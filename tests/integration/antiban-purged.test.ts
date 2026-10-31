@@ -23,7 +23,7 @@ const FORBIDDEN = new RegExp([
   'readIsDue', 'timezoneForPhone', 'circadianActivity', 'circadianDelayMs', 'circadianTimezone',
   '(?<!pg_)advisory(?!_xact| lock)', 'daily_cap_override', 'dailyCapOverride', 'warmup_started_at', 'warmupStartedAt',
   'quarantined', 'degraded', 'restriction_state', 'restrictionState', 'recovery_until', 'recoveryUntil', 'recovery_incident',
-  'perSenderDailyCap', 'CampaignForecast', 'SEND_RATE_PER_', 'SEND_CIRCADIAN', 'CONTACT_GRAPH_GATES', 'SEND_BACKGROUND_ENTROPY'
+  'perSenderDailyCap', 'CampaignForecast', 'SEND_RATE_PER_', 'IDENTICAL_BODY', 'identicalBodyCap', 'SEND_CIRCADIAN', 'CONTACT_GRAPH_GATES', 'SEND_BACKGROUND_ENTROPY'
 ].join('|'));
 
 function walk(dir: string, out: string[]): void {

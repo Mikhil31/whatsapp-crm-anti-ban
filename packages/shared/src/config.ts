@@ -101,12 +101,7 @@ const configSchema = z.object({
   // Number fallback (D-60): before the first send to a contact that has more than one phone number,
   // ask WhatsApp whether the primary one has an account, and message the next one that does. One lookup
   // per number, cached, only when a fallback exists. `false` always messages the primary number.
-  SEND_VERIFY_FALLBACK_NUMBERS: z.enum(['true', 'false']).default('true').transform((v) => v === 'true'),
-  // Body-variation backstop (D-26): the most identical message bodies
-  // one number may queue within a rolling 24h. Beyond it, further identical-body recipients are left
-  // pending until the window frees up or the operator adds spintax. Only bites a no-variation blast —
-  // spintax/`{{name}}` make bodies differ, so it never fires on a varied campaign.
-  IDENTICAL_BODY_DAILY_CAP: z.coerce.number().int().positive().max(100000).default(50)
+  SEND_VERIFY_FALLBACK_NUMBERS: z.enum(['true', 'false']).default('true').transform((v) => v === 'true')
 }).refine((c) => !(c.GATEWAY_CHANNEL === 'fake' && c.NODE_ENV === 'production'), {
   path: ['GATEWAY_CHANNEL'],
   message: 'the fake channel sends nothing real and must never run with NODE_ENV=production'

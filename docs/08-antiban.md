@@ -40,7 +40,6 @@ These are not behind the policy and nothing in it can relax them:
 - **Not sending to the sending number itself, an empty body, a contact whose numbers have no WhatsApp account** (the number fallback, D-60).
 - **The typing beat** (`SEND_TYPING_SIMULATION`): a "typing…" presence before each send.
 - **Connection handling**: a 403 raises a ban warning on the Numbers page and pauses the number's running campaigns; an unrequested logout (401) does the same; a device removed under Linked devices is an unlink, not a ban (R-017). These are written to `sender_health_event`.
-- **The identical-body backstop** (`IDENTICAL_BODY_DAILY_CAP`, D-26): the most messages with exactly the same text one number may queue in 24 hours. Spintax and `{{name}}` make bodies differ.
 
 ## Plugging a new anti-ban in
 

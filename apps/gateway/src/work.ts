@@ -61,8 +61,6 @@ export interface WorkContext {
    * context that says nothing still spaces its sends out; tests that want none of it pass a policy that always sends.
    */
   readonly antiBan?: AntiBanPolicy;
-  /** Most identical message bodies a sender may hold per 24h (D-26). Absent = no cap. */
-  readonly identicalBodyCap?: number;
   /**
    * Emit a `composing` presence and pause a human-like beat before each send (D-24). Opt-in, so tests that do
    * not exercise it are unaffected and add no real delay. A failure to signal presence never fails the send.
@@ -519,7 +517,6 @@ async function dispatchCampaignsInOrg(ctx: WorkContext): Promise<number> {
       queued += await dispatchCampaign(tenant, ctx.kms, {
         orgId: campaign.orgId, campaignId: campaign.id,
         senderIdentityId: campaign.senderIdentityId, body: campaign.body, limit: room,
-        identicalBodyCap: ctx.identicalBodyCap ?? Number.MAX_SAFE_INTEGER,
         gateOverrides: campaign.gateOverrides
       });
     }
