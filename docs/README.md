@@ -23,8 +23,7 @@ WhatsApp's API assumed. It also decodes the `M`, `P`, `F` and `FR` codes used th
 **To understand linking** — [26 Linking lifecycle](26-linking-lifecycle.md) (how the gateway,
 the database and the phone stay in sync, and why "connected" is not "receiving")
 
-**To understand anti-ban and restrictions** — [08 Anti-ban](08-antiban.md) →
-[27 Silent-restriction tracking](27-restriction-tracking.md) → [12 Testing](12-testing.md) (the simulation)
+**To understand anti-ban** — [08 Anti-ban](08-antiban.md) → [12 Testing](12-testing.md)
 
 **To deploy or operate it** — [13 Deployment](13-deployment.md) →
 [19 Capacity](19-capacity.md) → [14 Runbooks](14-runbooks.md) →
@@ -44,7 +43,7 @@ the database and the phone stay in sync, and why "connected" is not "receiving")
 | [05 Data model](05-data-model.md) | Every table, **every column explained** |
 | [06 Features](06-features/) | One file per module, F1–F12, with acceptance criteria and test cases |
 | [07 Ingestion](07-ingestion.md) | Getting data in from spreadsheets, sheets, APIs |
-| [08 Anti-ban](08-antiban.md) | The engine that keeps numbers alive, and the research behind every number in it |
+| [08 Anti-ban](08-antiban.md) | What was removed, what is in place now, and where a new anti-ban plugs in |
 | [09 Security](09-security.md) | Threat model, encryption, compliance |
 | [10 Stack](10-stack.md) | Every technology choice, and the alternative that lost |
 | [11 Conventions](11-conventions.md) | How code is written here, including the comment rule |
@@ -63,7 +62,6 @@ the database and the phone stay in sync, and why "connected" is not "receiving")
 | [24 Testing it by hand](24-local-testing.md) | Start the stack, get a key, exercise every endpoint, read the headers that matter |
 | [25 Ingestion guide](25-ingestion-guide.md) | Every source, how deduping works at both layers, and a hands-on walkthrough |
 | [26 Linking lifecycle](26-linking-lifecycle.md) | How the gateway, database and phone stay in sync on link status; the command channel; why "connected" ≠ "receiving" (D-14) |
-| [27 Silent-restriction tracking](27-restriction-tracking.md) | How a number WhatsApp has quietly limited is detected from delivery evidence, what the system does about it, and the operator runbook |
 | [28 Logging and telemetry](28-logging-and-telemetry.md) | What the system logs and where it goes, how to read it, the request id, health endpoints, the database state that doubles as a record, troubleshooting recipes, and what is not built (D-56) |
 | [29 Free hosting plan](29-free-hosting-plan.md) | Running this for about 10 users and 10 numbers for free: what each cloud and free service really gives, why most mix-and-match combinations fail for this system, the home-hosted plan, telemetry on a free budget, Oracle (last), and the decisions needed |
 | [30 Running behind a Cloudflare Tunnel](30-cloudflare-tunnel.md) | The common failures of web apps behind Cloudflare (524, upload caps, Next.js server-action origin checks, redirect loops, Bot Fight Mode, client IP), what was researched and measured, what the repo does about each, and a dashboard checklist |

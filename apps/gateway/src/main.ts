@@ -7,8 +7,8 @@ import { tenantDatabase } from './tenant.js';
 import { localKmsFromConfig } from '@crm/kms-local';
 import { BaileysChannelProvider } from '@crm/channel-baileys';
 import { FakeChannelProvider } from '@crm/channel-fake';
-import { storeInboundMessage, storeOwnMessage, claimCampaignReply, applyDeliveryStatus, storeMedia, DEFAULT_REPLY_FLOOR,
-  DecryptFailureTracker, markDecryptBurst, markOwnDecryptBurst, recordRetryRequest, EntropyScheduler, linkLidToPhone,
+import { storeInboundMessage, storeOwnMessage, claimCampaignReply, applyDeliveryStatus, storeMedia,
+  DecryptFailureTracker, markDecryptBurst, markOwnDecryptBurst, recordRetryRequest, linkLidToPhone,
   markMessageFailedByProviderId, assertKeyRingCoversData, autoReply, sentMessageText } from '@crm/core';
 import { LiveLlm } from '@crm/llm';
 import { createStorage } from '@crm/storage';
@@ -37,7 +37,7 @@ const OWN_MESSAGE_SETTLE_MS = 10_000;
  * WhatsApp connection on each keystroke (docs/04-architecture.md).
  *
  * It is also intentionally dumb. It owns sockets and knows nothing about campaigns, consent,
- * pacing or policy. Work arrives as rows in the database; results go back the same way. Every
+ * policy. Work arrives as rows in the database; results go back the same way. Every
  * safety gate lives above it in the dispatcher, so nothing can bypass them by reaching a
  * provider directly (M12).
  */
@@ -65,12 +65,11 @@ async function main(): Promise<void> {
   // dropped too early, D-31). Better a loud boot failure than messages that silently won't open.
   await assertKeyRingCoversData(db, kms);
   const authStore = new PostgresAuthStateStore(db, kms);
-  // Layer 5: Baileys drops undecryptable frames before the app sees them, so its logger is the only
-  // place a diverged session shows. Three "Bad MAC" in a minute is recorded on the session row and
-  // scored by the next health sweep, which degrades the number and later lets it recover.
+  // Baileys drops undecryptable frames before the app sees them, so its logger is the only place a diverged
+  // session shows. Three "Bad MAC" in a minute is recorded on the session row, where the composer reads it.
   const decryptTracker = new DecryptFailureTracker();
   // The same count for messages from this account's OWN other devices (the owner's phone, WhatsApp Web): not ban evidence, so it is
-  // kept apart and never scored, but the owner is told (D-102): those messages are missing from the inbox until the number is relinked.
+  // kept apart, but the owner is told (D-102): those messages are missing from the inbox until the number is relinked.
   const ownDecryptTracker = new DecryptFailureTracker();
   // `GATEWAY_CHANNEL=fake` swaps in the in-memory channel so CI and local UI tests can watch a
   // broadcast really go through the engine without touching WhatsApp. Config refuses it in production.
@@ -130,30 +129,9 @@ async function main(): Promise<void> {
   const ctx: WorkContext = {
     db, provider, logger, storage, tenantRole,
     decrypt: (cipher) => new TextDecoder().decode(kms.decrypt(cipher)),
-    // The anti-ban ceilings. Configurable per deployment, but a ceiling either way — nothing
-    // in the send path can raise them (docs/08-antiban.md).
-    limits: {
-      perMinute: config.SEND_RATE_PER_MINUTE, perDay: config.SEND_RATE_PER_DAY,
-      identicalBodyCap: config.IDENTICAL_BODY_DAILY_CAP,
-      circadianTimezone: config.SEND_CIRCADIAN ? config.SEND_TIMEZONE : null
-    },
-    contactGraph: config.CONTACT_GRAPH_GATES
-      ? {
-          newContactsPerHour: config.NEW_CONTACTS_PER_HOUR,
-          newContactsPerDay: config.NEW_CONTACTS_PER_DAY,
-          // Lower the daily allowance until recent new contacts actually reply (Layer 4).
-          ...(config.NEW_CONTACT_REPLY_FLOOR ? { replyFloor: DEFAULT_REPLY_FLOOR } : {})
-        }
-      : null,
-    // Make each send look human — a "typing…" beat before it lands (docs/08-antiban.md, D-24).
+    // Make each send look human — a "typing…" beat before it lands (D-24).
     typingSimulation: config.SEND_TYPING_SIMULATION,
     verifyFallbackNumbers: config.SEND_VERIFY_FALLBACK_NUMBERS,
-    // Blue-tick inbound messages only after a human-like 10–60 min delay, in active hours.
-    readReceipts: config.SEND_READ_RECEIPTS,
-    // Also respect the recipient's day, inferred from their number's country.
-    recipientTimezone: config.SEND_RECIPIENT_TIMEZONE,
-    // Idle-time presence noise every 2–6 h per number, in active hours.
-    ...(config.SEND_BACKGROUND_ENTROPY ? { entropy: new EntropyScheduler() } : {}),
     // Campaign bodies are encrypted on their way into a message, exactly like any other.
     kms, llm,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -253,9 +231,6 @@ async function main(): Promise<void> {
             { senderId: event.senderId, conversationId: stored.conversationId },
             'inbound message stored'
           );
-          await inOrg(org).execute(sql`
-            UPDATE sender_identity SET last_inbound_at = now() WHERE id = ${event.senderId}`);
-
           // Only for a message that was actually inserted. A redelivery already has its file,
           // and fetching it again would cost a round trip to WhatsApp to produce a duplicate.
           if (event.mediaRef !== null && stored.messageId !== null) {
@@ -359,8 +334,8 @@ async function main(): Promise<void> {
       try {
         const org = await orgForSender(db, event.senderId);
         if (org === null) continue;
-        // A delivery ERROR ack from the server: the message did not go. Recorded as a failed send so
-        // the health score and the restriction detector see it, instead of leaving it at "sent".
+        // A delivery ERROR ack from the server: the message did not go. Recorded as a failed send
+        // instead of leaving it at "sent".
         if (event.status === 'failed') {
           await markMessageFailedByProviderId(inOrg(org), org, event.providerMessageId, 'delivery_error');
           continue;

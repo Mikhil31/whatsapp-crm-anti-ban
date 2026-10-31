@@ -35,7 +35,7 @@ export interface BaileysProviderOptions {
   readonly qrTtlMs?: number;
   /**
    * Called each time Baileys reports a frame it could not decrypt on this sender's socket. The
-   * gateway turns a burst of these into a health signal (docs/08-antiban.md, Layer 5).
+   * gateway turns a burst of these into a note on the session row.
    */
   readonly onDecryptFailure?: (senderId: string, at: Date, info: { own: boolean }) => void;
   /**
@@ -63,7 +63,7 @@ export interface BaileysProviderOptions {
  * WhatsApp closes the socket with 515 `restart_required` immediately after a QR pairing and
  * expects the client straight back with the credentials it has just issued — so that case
  * reconnects at once and is not counted as a failure. Everything else backs off, because a
- * reconnect storm is one of the behaviours that gets a number banned (docs/08-antiban.md).
+ * reconnect storm is one of the behaviours that gets a number banned.
  */
 const RECONNECT_MAX_ATTEMPTS = 5;
 const RECONNECT_BASE_MS = 1_000;
@@ -86,8 +86,6 @@ const BAILEYS_CAPABILITIES: ChannelCapabilities = {
   supportsDeliveryReceipts: true,
   supportsMedia: true,
   supportsInteractive: false,
-  // Not a technical limit — a safety one. See docs/08-antiban.md; the engine enforces it.
-  perSenderDailyCap: 1500,
   costPerMessage: false
 };
 
@@ -108,8 +106,8 @@ interface Connection {
  * WhatsApp Web.
  *
  * This is the free transport. It is also the one that can get a number permanently banned, with
- * no appeal — see docs/08-antiban.md. Nothing in this class rate-limits anything: pacing, warmup
- * and the safety gates live in the dispatcher above it, so that every producer passes through
+ * no appeal. Nothing in this class rate-limits anything: the anti-ban policy and the safety gates
+ * live in the gateway above it, so that every producer passes through
  * them and none can bypass by reaching the provider directly (M12).
  */
 export class BaileysChannelProvider implements ChannelProvider {
@@ -235,9 +233,9 @@ export class BaileysChannelProvider implements ChannelProvider {
   }
 
   /**
-   * Shows or clears the "typing…" indicator to a recipient (docs/08-antiban.md, D-24).
+   * Shows or clears the "typing…" indicator to a recipient (D-24).
    *
-   * Best-effort: presence is cosmetic anti-ban, never correctness, so a closed socket or a
+   * Best-effort: presence is cosmetic, never correctness, so a closed socket or a
    * refused update is a silent no-op — the caller must never let it fail the send it precedes.
    */
   async typing(sender: SenderRef, to: Recipient, state: 'composing' | 'paused'): Promise<void> {
@@ -258,23 +256,6 @@ export class BaileysChannelProvider implements ChannelProvider {
     const found = await conn.socket.onWhatsApp(`${phoneE164.replace(/\D/g, '')}@s.whatsapp.net`);
     if (found === undefined) return null;
     return found.some((r) => r.exists);
-  }
-
-  /** Sets this number's own online/offline presence; false when the socket is not open. */
-  async presence(sender: SenderRef, state: 'available' | 'unavailable'): Promise<boolean> {
-    const conn = this.#connections.get(sender.id);
-    if (!conn || conn.state !== 'open') return false;
-    await conn.socket.sendPresenceUpdate(state);
-    return true;
-  }
-
-  /** Sends the blue ticks for one inbound message; false when the socket is not open. */
-  async markRead(sender: SenderRef, to: Recipient, providerMessageId: string): Promise<boolean> {
-    const conn = this.#connections.get(sender.id);
-    if (!conn || conn.state !== 'open') return false;
-    const jid = to.providerAddress ?? `${to.phoneE164.replace(/\D/g, '')}@s.whatsapp.net`;
-    await conn.socket.readMessages([{ remoteJid: jid, id: providerMessageId, fromMe: false }]);
-    return true;
   }
 
   /** Inbound messages, normalised so callers never see Baileys' own shapes. */
@@ -384,7 +365,7 @@ export class BaileysChannelProvider implements ChannelProvider {
         )
         : this.#options.logger) as never,
       // Identify as a desktop browser. A plausible, stable client fingerprint matters — the
-      // detection heuristics notice inconsistency across sessions (docs/08-antiban.md).
+      // detection heuristics notice inconsistency across sessions.
       browser: Browsers.ubuntu('Chrome'),
       // We render the QR ourselves; printing it to stdout would put a credential in the logs.
       printQRInTerminal: false,

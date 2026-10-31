@@ -165,7 +165,7 @@ makes "who did this?" always answerable (NFR-17).
 | `org_id` | uuid FK | Tenant scope. |
 | `actor_type` | text | `user` / `system` / `api` / `agent`. Distinguishes a person from an automation without two nullable columns. |
 | `actor_id` | uuid | Who or what did it. A reserved `system` actor row exists precisely so automated changes still have a non-null actor. |
-| `action` | text | `contact.merged`, `campaign.launched`, `sender.quarantined`. Verb-shaped and stable enough to filter on. |
+| `action` | text | `contact.merged`, `campaign.launched`, `sender.removed`. Verb-shaped and stable enough to filter on. |
 | `target_type` / `target_id` | text / uuid | What was acted on. Not a foreign key, because the target may later be deleted and the audit entry must survive. |
 | `before` / `after` | jsonb NULL | State either side of the change. Answers "what actually changed?" rather than just "something changed". |
 | `ip` | inet NULL | Source address where one applies. Absent for system actions. |
@@ -204,7 +204,7 @@ customer, no patient. That absence is what stops this becoming an ATS.
 | `do_not_contact` | bool | **Gate zero on every send path.** Overridable by nobody, including an admin — it protects a phone number's reputation as much as a legal position. |
 | `dnc_reason` | text NULL | Why: `replied_stop`, `manual`, `complaint`. Distinguishes a customer's choice from an operator's decision. |
 | `dnc_at` | timestamptz NULL | When they opted out. Consent withdrawal has to be provable, not just applied. |
-| `last_inbound_at` | timestamptz NULL | Last message **from** them. Feeds the reply-ratio calculation, which is the strongest ban-risk signal (`08-antiban.md`). |
+| `last_inbound_at` | timestamptz NULL | Last message **from** them. Shown in the inbox. |
 | `last_outbound_at` | timestamptz NULL | Last message **to** them. Drives the cooldown gate — "have we contacted this person too recently?". |
 | `created_at` / `updated_at` | timestamptz | Standard audit timestamps. |
 | `deleted_at` | timestamptz NULL | Soft delete. Conversations and messages reference contacts, so a hard delete would orphan history. |
@@ -353,15 +353,8 @@ re-linking a number silently broke sending.
 | `label` | text | Human name — "Priya's number", "main WABA". |
 | `phone_e164` | text | The number itself, canonical form. |
 | `owner_user_id` | uuid FK NULL | Which agent it belongs to. Admins can reassign; the change is audited. |
-| `status` | text | `linking` / `active` / `degraded` / `quarantined` / `retired`. `quarantined` is the engine's emergency brake; `retired` is a dead number kept for history. |
+| `status` | text | The lifecycle: `linking` / `active` / `retired` (a dead number kept for history) / `removed` (hidden from the Numbers page). Whether it is connected right now is `channel_session.connection_state`. |
 | `capabilities_snapshot` | jsonb | What this provider could do when last checked — template requirements, window length, media support. The dispatcher reads it to refuse illegal sends *before* calling the provider. |
-| `health` | jsonb | Rolling counters: delivery ratio, reply ratio, recent failures. |
-| `warmup_started_at` | timestamptz NULL | When the ramp began. Drives the day-N ceiling (20 → 36 → 65 → …). Reset after 72 hours of inactivity. |
-| `recovery_incident` / `recovery_started_at` / `recovery_until` | text / timestamptz NULL | Layer 6 timed recovery after a 463/429/soft-ban (migration 0016): the incident class and its pause window. `recoveryState` derives the phase and cap fraction from these. |
-| `last_inbound_at` | timestamptz NULL | A number that has never received a message is capped to 20/day — outbound-only is exactly what the graph heuristics punish. |
-| `risk_score` | int | 0–100, computed from `send_risk_event`. ≥60 auto-pauses campaigns; ≥85 quarantines. |
-| `daily_cap_override` | int NULL | Lets an admin lower the cap. **Cannot raise it above the safety ceiling** — no code path exists. |
-| `restriction_state` / `restriction_since` | text / timestamptz | The silent-restriction detector's verdict (`ok`, `suspected`, `likely`) and when it entered that state (docs/27). |
 | `meta_waba_id` / `meta_phone_number_id` | text NULL | Meta Cloud API identifiers, for official senders only. |
 | `meta_quality_rating` | text NULL | `high` / `medium` / `low` from Meta. Marketing sends **hard-stop at low**. |
 | `meta_messaging_tier` | text NULL | 250 / 1k / 10k / 100k / unlimited. The dispatcher will not exceed the known tier. |
@@ -514,7 +507,6 @@ into a browser and never persisted, so nothing was reusable, auditable or A/B-te
 | `template_id` | uuid FK | What to send. |
 | `sender_pool` | jsonb | Which numbers may send, and their weights. Spreading load across numbers is how volume scales safely. |
 | `scheduled_at` | timestamptz NULL | When to start. |
-| `throttle_profile` | jsonb | Per-campaign pacing overrides, within the engine's hard limits. |
 | `quiet_hours` / `timezone` | jsonb / text | Don't message people at 3am. Respects the recipient's timezone where known. |
 | `created_by` | uuid FK | Who launched it. |
 | `estimated_cost_micros` | int | What the dry run predicted. |
@@ -647,7 +639,6 @@ stop trusting a classifier they cannot inspect (M32).
 | `webhook_endpoint` ⬜ | `org_id`, `url`, `secret`, `event_types[]`, `status` | Where to send outbound events. `url` is SSRF-guarded — private ranges and cloud metadata addresses are refused. |
 | `webhook_delivery` ⬜ | `endpoint_id`, `event`, `payload`, `attempts`, `response_status`, `next_retry_at` | One attempt log per event. Gives at-least-once delivery, exponential backoff, manual replay and a dead-letter queue. |
 | `inbound_event_raw` ⬜ | `provider`, `payload`, `signature_verified`, `received_at`, `processed_at` | **The raw provider payload, stored before processing.** Meta expects a 200 within ~3 seconds, so the handler verifies the signature, writes this row, and returns — all real work happens afterwards. Also makes a bad deploy replayable instead of a data-loss event (NFR-8). |
-| `send_risk_event` ⬜ | `sender_identity_id`, `kind`, `weight`, `detail`, `at` | Every ban-relevant signal, itemised: 401 logged out (+60), 403 (+40), 463 timelock (+25), failed send (+20). `sender_identity.risk_score` is their sum, so **the health dashboard shows evidence rather than a bare number**. |
 | `rate_limit_state` ⬜ | `key`, `window_start`, `count` | Durable token-bucket state. Lives here (or in Redis) rather than in process memory, so limits hold across worker replicas — the old system's counters were per-process (M13). |
 | `org_setting` ⬜ | `org_id`, `key`, `value` | Branding, quiet hours, caps, locale, currency, retention. **Branding is configuration**; the old system hardcoded a client's name into every page title and the AI prompt. |
 | `feature_flag` ⬜ | `org_id`, `key`, `enabled` | Ship code dark, enable per tenant. |
@@ -716,15 +707,15 @@ original shape; these are the deltas.
 
 | Table · column | Migration | What it is |
 |---|---|---|
-| `channel_session.decrypt_burst_at` | 0018 | When a burst of decrypt failures was last seen (a health signal; live for 15 min) |
-| `sender_identity.enforcement`, `advisory_reason`, `advisory_set_by`, `advisory_set_at`, `advisory_bypass_count`, `advisory_last_bypass` | 0019 | Advisory mode (D-29): `enforce` / `advisory`, who/why, and how often a hold was bypassed |
+| `channel_session.decrypt_burst_at` | 0018 | When a burst of decrypt failures was last seen (the composer warns for 15 min) |
+| `sender_identity.enforcement`, `advisory_reason`, `advisory_set_by`, `advisory_set_at`, `advisory_bypass_count`, `advisory_last_bypass` | 0019 | Advisory mode (D-29). **Dropped in 0039.** |
 | `campaign.gate_overrides`, `gate_override_reason` | 0019 | Recipient-experience gates (and do-not-contact) an admin lifted for this campaign, with the reason |
 | `custom_field` | 0020 | The org's typed field vocabulary: `key`, `label`, `type` (`text`/`number`/`date`/`select`), `options` (RLS forced) |
-| `message.hold_reason` | 0020 | Why a still-queued message is waiting (`sender_not_connected`, `quarantined`, `paced:…`) — cleared on send |
+| `message.hold_reason` | 0020 | Why a still-queued message is waiting (`sender_not_connected`, or a reason the anti-ban policy gave) — cleared on send |
 | `message.dnc_override`, `dnc_override_reason` | 0021 | An admin knowingly sent to a do-not-contact person; the gateway refuses such a message without it |
-| `sender_identity.restriction_state`, `restriction_since` | 0022 | Silent-restriction verdict (`ok`/`suspected`/`likely`) and when it entered it (docs/27) |
-| `sender_health_event` | 0022 | A number's health timeline: `kind`, `severity`, a plain `summary`, the `evidence` behind it (RLS forced) |
-| `campaign.pause_reason` | 0022 | Set when the system paused a campaign (`restriction_likely`) |
+| `sender_identity.restriction_state`, `restriction_since` | 0022 | Silent-restriction verdict. **Dropped in 0039.** |
+| `sender_health_event` | 0022 | A number's timeline (a refused connection, a logout nobody asked for, a device removed on the phone): `kind`, `severity`, a plain `summary`, the `evidence` behind it (RLS forced) |
+| `campaign.pause_reason` | 0022 | Set when the system paused a campaign (`ban_suspected`, `unlinked`) |
 | `segment.saved` | 0023 | `false` for a one-off inline audience built while creating a campaign; hidden from the saved list |
 
 Contacts also gain behaviour without new columns: a `wa_lid` identity can be linked to a `phone`

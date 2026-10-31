@@ -75,10 +75,9 @@ Numbered so everything downstream — features, tests, acceptance criteria — c
 ### Anti-ban (detail in `08-antiban.md`)
 | id | Requirement | Pri |
 |---|---|---|
-| FR-38 | Per-number warmup ramp from link date | V1 |
+| FR-38 | Per-number gap between sends and a small campaign batch (`AntiBanPolicy`; the first engine was removed on 2026-10-30) | V1 |
 | FR-39 | Rate limits per minute / hour / day with Gaussian jitter, enforced across all workers | V1 |
-| FR-40 | Typing simulation and circadian pacing | V1 |
-| FR-41 | Contact-graph gates: stranger multipliers, new-contact throttle, reply-ratio floor | V1 |
+| FR-40 | Typing simulation | V1 |
 | FR-42 | Risk scoring from typed disconnect and delivery signals, with auto-throttle and auto-pause | V1 |
 | FR-43 | Recovery orchestration per incident class | V1 |
 | FR-44 | Policy gates with a hard distinction between admin-overridable and never-overridable | V1 |
@@ -158,7 +157,7 @@ Numbered so everything downstream — features, tests, acceptance criteria — c
 | NFR-19 | Install to working instance in < 10 minutes following the README alone |
 | NFR-20 | Every alert links to a runbook entry that says what to do |
 | NFR-21 | Every class, function, exported constant and type carries a 1–4 line comment, lint-enforced |
-| NFR-22 | ≥ 80% coverage on core; **100% on the anti-ban engine and the dispatcher** |
+| NFR-22 | ≥ 80% coverage on core; **100% on the anti-ban policy and the dispatcher** |
 | NFR-23 | Adding a channel, source or infrastructure driver requires no change to calling code |
 | NFR-24 | The free/`lean` path is the primary tested path in CI |
 | NFR-25 | Accessibility: WCAG 2.1 AA for the inbox and campaign builder |

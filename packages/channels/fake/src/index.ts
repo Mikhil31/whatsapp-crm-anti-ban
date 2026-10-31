@@ -40,7 +40,6 @@ const DEFAULT_CAPABILITIES: ChannelCapabilities = {
   supportsDeliveryReceipts: true,
   supportsMedia: true,
   supportsInteractive: false,
-  perSenderDailyCap: null,
   costPerMessage: false
 };
 
@@ -48,7 +47,7 @@ const DEFAULT_CAPABILITIES: ChannelCapabilities = {
  * An in-memory ChannelProvider. Sends nothing; records everything.
  *
  * This is the single most useful object in the test suite. With it, the dispatcher, the
- * anti-ban engine, campaigns, the inbox and the whole inbound pipeline are testable with no
+ * anti-ban policy, campaigns, the inbox and the whole inbound pipeline are testable with no
  * WhatsApp account, no phone and no ban risk. The previous system had no such thing, which is
  * why its own docs describe changes as "verified live against the real OpenWA session" —
  * i.e. by messaging real people (docs/00-prior-art.md, M20).
@@ -71,12 +70,6 @@ export class FakeChannelProvider implements ChannelProvider {
   readonly registrationChecks: string[] = [];
   /** When set, lookups answer "could not tell" (null), as a closed socket or a failed query would. */
   registrationUnknown = false;
-
-  /** Every read receipt sent, in order, so a test can assert when (and whether) one went out. */
-  readonly readCalls: Array<{ senderId: string; to: Recipient; providerMessageId: string }> = [];
-
-  /** Every own-presence call, in order, so a test can assert the entropy blip fired. */
-  readonly presenceCalls: Array<{ senderId: string; state: 'available' | 'unavailable' }> = [];
 
   private readonly health_ = new Map<string, ProviderHealth>();
   private readonly inboundQueue: NormalisedInboundEvent[] = [];
@@ -170,8 +163,8 @@ export class FakeChannelProvider implements ChannelProvider {
   }
 
   /**
-   * Records a typing-presence call instead of sending one, so a test can assert the anti-ban
-   * typing simulation (docs/08-antiban.md, D-24) fired `composing` before the send. A disconnected
+   * Records a typing-presence call instead of sending one, so a test can assert the
+   * typing simulation (D-24) fired `composing` before the send. A disconnected
    * sender is a silent no-op, exactly as the real adapter treats a closed socket.
    */
   async typing(sender: SenderRef, to: Recipient, state: 'composing' | 'paused'): Promise<void> {
@@ -179,25 +172,11 @@ export class FakeChannelProvider implements ChannelProvider {
     this.typingCalls.push({ senderId: sender.id, to, state });
   }
 
-  /** Records an own-presence call; false (like the real adapter) when not connected. */
-  async presence(sender: SenderRef, state: 'available' | 'unavailable'): Promise<boolean> {
-    if (this.health_.get(sender.id)?.state !== 'open') return false;
-    this.presenceCalls.push({ senderId: sender.id, state });
-    return true;
-  }
-
   /** Answers a registration lookup from `unregistered`, recording it; null when set to be unable to tell. */
   async isRegistered(_sender: SenderRef, phoneE164: string): Promise<boolean | null> {
     this.registrationChecks.push(phoneE164);
     if (this.registrationUnknown) return null;
     return !this.unregistered.has(phoneE164);
-  }
-
-  /** Records a read receipt; false (like the real adapter) when the sender is not connected. */
-  async markRead(sender: SenderRef, to: Recipient, providerMessageId: string): Promise<boolean> {
-    if (this.health_.get(sender.id)?.state !== 'open') return false;
-    this.readCalls.push({ senderId: sender.id, to, providerMessageId });
-    return true;
   }
 
   /**

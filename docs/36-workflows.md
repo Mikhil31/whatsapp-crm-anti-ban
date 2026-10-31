@@ -56,10 +56,10 @@ flowchart TD
   J -- yes --> K[Store the file once per organisation, same bytes = same copy, keep the clip next to the GIF]
   K --> L[Preview from a safe re-encoded thumbnail]
   L --> M[Create the draft with media_asset_id]
-  M --> N[An admin presses Start: audience is frozen, forecast shown]
-  N --> O[Gateway sweep: dispatchCampaign claims pending recipients with SKIP LOCKED, within the number's allowance and the identical-body cap]
+  M --> N[An admin presses Start: audience is frozen]
+  N --> O[Gateway sweep: dispatchCampaign claims pending recipients with SKIP LOCKED, up to the anti-ban policy's batch]
   O --> P[Each recipient gets a message row: image or video, the file, the caption]
-  P --> Q{handleSend gates:<br/>do-not-contact, number connected, quarantine, pacing}
+  P --> Q{handleSend gates:<br/>do-not-contact, number connected, the anti-ban policy}
   Q -- held --> R[Stays queued with the reason, retried by the sweep]
   Q -- ok --> S{GIF clip?}
   S -- no --> T[Sent as a photo with the caption]
@@ -106,7 +106,7 @@ flowchart TD
   K --> L{Model asks to hand over?}
   L -- yes --> M[Chat goes back to a person with a summary note]
   L -- no --> N[Reply queued like any message]
-  N --> O[Gateway pacing and anti-ban gates decide when it leaves]
+  N --> O[Gateway gates and the anti-ban policy decide when it leaves]
 ```
 
 ## 5 · Importing contacts
@@ -152,17 +152,15 @@ flowchart TD
   B -- yes --> C[Failed: do_not_contact]
   B -- no --> D{Number connected?}
   D -- no --> E[Stays queued: sender_not_connected]
-  D -- yes --> F{Quarantined by the health score?}
-  F -- yes, enforcing --> G[Stays queued: quarantined]
-  F -- no, or advisory mode --> H{Pacing: per-minute and per-day allowance,<br/>new-contact limits, circadian rhythm}
-  H -- over --> I[Stays queued: paced]
-  H -- within --> J[Read the file from storage if any, optional typing pause]
+  D -- yes --> H{Anti-ban policy: send, wait or hold?}
+  H -- hold --> I[Stays queued with the policy's reason]
+  H -- send, or wait then send --> J[Read the file from storage if any, optional typing pause]
   J --> K[Send through the channel]
   K --> L{Sent?}
   L -- yes --> M[Marked sent, provider id stored]
   L -- no --> N[Marked failed with the reason]
 ```
-Advisory mode (D-29) lets a number send past the number-protecting holds; the do-not-contact gate is never bypassed.
+The only policy for now (`basicPolicy`) never holds: it makes a send wait out the rest of a random 3 to 8 second gap since the number's last send.
 
 ## 8 · Choosing the AI: the AI settings tab
 
@@ -191,4 +189,4 @@ flowchart TD
 
 ## AI campaigns: who writes the first message
 
-A campaign made from an AI template (AI page → "Message a group") does not send its typed text. The gateway asks the AI to write one opening per person from the template's instructions, the person's name and stored columns, and the typed text as an outline. Only people with an opening are queued, and the AI's text is what goes out; the rest of the pipeline (pacing, caps, do-not-contact, identical-body check) is unchanged. If the AI is off, or no model is set, those campaigns wait. After three failed writes a person is skipped as `ai_opening_failed`. Code: `packages/core/src/ai-opening.ts`, `dispatchCampaign`, `apps/gateway/src/work.ts`.
+A campaign made from an AI template (AI page → "Message a group") does not send its typed text. The gateway asks the AI to write one opening per person from the template's instructions, the person's name and stored columns, and the typed text as an outline. Only people with an opening are queued, and the AI's text is what goes out; the rest of the pipeline (the anti-ban policy, do-not-contact) is unchanged. If the AI is off, or no model is set, those campaigns wait. After three failed writes a person is skipped as `ai_opening_failed`. Code: `packages/core/src/ai-opening.ts`, `dispatchCampaign`, `apps/gateway/src/work.ts`.

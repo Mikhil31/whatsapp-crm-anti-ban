@@ -177,8 +177,8 @@ const createCannedReply = z.object({
  * Conversations and messages.
  *
  * `POST /messages` **queues**, it does not send. The socket lives in the gateway, and more
- * importantly every outbound message must pass the pacing and policy gates that will live in
- * the dispatcher (P6) — a route that could reach a provider directly would be a way to bypass
+ * importantly every outbound message must pass the anti-ban policy and the gates in the
+ * gateway — a route that could reach a provider directly would be a way to bypass
  * them, which is precisely the hole the previous system had (docs/00-prior-art.md, M12).
  */
 export function messagesRouter(
@@ -757,12 +757,12 @@ export function messagesRouter(
   /**
    * Whether the number this thread sends from can send right now. The composer polls it so an
    * agent is told *before* typing that a message would only sit waiting. `canSend` is true only
-   * when the socket is open and the number is not quarantined; `reason` says what is wrong.
+   * when the socket is open; `reason` says what is wrong.
    */
   router.get('/conversations/:id/sender-status', requireUuidParam('id'), requireScope('conversations:read'),
     async (req: Request, res: Response) => {
       const rows = await req.tenant!((tx) => tx.execute(sql`
-        SELECT si.label, si.status, si.enforcement, si.restriction_state AS "restrictionState",
+        SELECT si.label, si.status,
                cs.connection_state AS "connectionState",
                -- A burst of undecryptable messages in the last 15 minutes: the encryption session is broken (D-101, D-102).
                coalesce(cs.decrypt_burst_at > now() - interval '15 minutes', false) AS "contactBurst",
@@ -772,19 +772,18 @@ export function messagesRouter(
         LEFT JOIN channel_session cs ON cs.sender_identity_id = si.id
         WHERE v.id = ${String(req.params.id)} AND v.org_id = ${req.crm!.orgId}`));
       const s = (rows as unknown as Array<{
-        label: string; status: string; enforcement: string; restrictionState: string;
+        label: string; status: string;
         connectionState: string | null; contactBurst: boolean; ownBurst: boolean;
       }>)[0];
       if (!s) { res.status(404).json(problem(req, 404, 'NOT_FOUND', 'No such conversation.')); return; }
       const connected = s.connectionState === 'open';
-      const reason = !connected ? 'not_connected' : s.status === 'quarantined' ? 'quarantined' : null;
+      const reason = connected ? null : 'not_connected';
       res.json({ data: {
         label: s.label, connectionState: s.connectionState, status: s.status,
-        restrictionState: s.restrictionState,
         // `contacts`: people's messages to this number cannot be decrypted; `own`: the owner's own phone or WhatsApp Web messages cannot.
         // Either way the encryption session is broken and the fix is to link the number again (docs/14 RB-13).
         sessionTrouble: s.contactBurst ? 'contacts' : s.ownBurst ? 'own' : null,
-        canSend: reason === null || s.enforcement === 'advisory' && connected, reason
+        canSend: reason === null, reason
       } });
     });
 
@@ -880,7 +879,7 @@ export function messagesRouter(
    * WhatsApp carries and what `detectMediaType` can vouch for. HTML, SVG and anything unrecognised
    * is refused outright rather than stored and sent. The thread lock applies exactly as it does to
    * a text reply. The message is queued like any other: the gateway reads the file from storage
-   * and sends it, paced by the same anti-ban engine.
+   * and sends it through the same anti-ban policy.
    */
   router.post('/conversations/:id/attachments', requireUuidParam('id'),
     requireScope('messages:send'), async (req: Request, res: Response) => {
@@ -1050,8 +1049,7 @@ export function messagesRouter(
       return;
     }
     if (!phone.value.reachableOnWhatsApp) {
-      // Caught here rather than at send time: a doomed send costs the sender's delivery ratio,
-      // which feeds its health score (docs/08-antiban.md).
+      // Caught here rather than at send time: a doomed send would only fail later.
       res.status(422).json(problem(req, 422, 'NOT_REACHABLE',
         `${phone.value.e164} looks like a ${phone.value.type} number, which cannot receive WhatsApp.`));
       return;
@@ -1076,7 +1074,7 @@ export function messagesRouter(
         SELECT id FROM sender_identity
         WHERE org_id = ${orgId}
           AND (${senderId ?? null}::uuid IS NULL OR id = ${senderId ?? null}::uuid)
-          AND status IN ('active','degraded')
+          AND status = 'active'
         ORDER BY created_at ASC LIMIT 1
       ), existing AS (
         SELECT contact_id FROM contact_identity

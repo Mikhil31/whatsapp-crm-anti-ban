@@ -2,7 +2,6 @@ import { resolveSendAsset } from './campaign-media.js';
 import { sql } from 'drizzle-orm';
 import type { Transaction } from '@crm/db';
 import type { KmsDriver } from '@crm/kms-local';
-import { dailyCeiling, type PacingLimits } from './pacing.js';
 import { renderBody } from './body-variation.js';
 import { buildSegmentPredicate, type SegmentDefinition } from './segments.js';
 import type { TenantWork } from './ingestion.js';
@@ -11,14 +10,13 @@ import { blockingPolicyGate, POLICY_SKIP_REASON, COOLDOWN_DAYS } from './policy-
 /**
  * Bulk sends.
  *
- * The shape of this is decided by one fact: **a campaign cannot be allowed to outrun the
- * anti-ban ceiling, and it must not be able to bury an agent's reply either.**
+ * The shape of this is decided by one fact: **a campaign must not be able to bury an agent's reply, and must not
+ * be a burst.**
  *
- * So a campaign does not queue its messages at launch. Fifty thousand queued rows would be
- * re-evaluated by the pacing gate on every sweep, would sit ahead of a human's reply in the
- * same queue, and would have to be individually cancelled to stop the campaign. Instead the
- * `campaign_recipient` rows **are** the queue, and a dispatcher converts them into messages
- * only as fast as the sender's remaining allowance permits (`docs/08-antiban.md`).
+ * So a campaign does not queue its messages at launch. Fifty thousand queued rows would sit ahead of a
+ * human's reply in the same queue and would have to be individually cancelled to stop the campaign. Instead the
+ * `campaign_recipient` rows **are** the queue, and a dispatcher converts them into messages a small batch at a time
+ * (how many is the anti-ban policy's say, `campaignBatch`).
  *
  * Pausing is then instant and costs nothing: the dispatcher simply stops looking at it.
  */
@@ -31,22 +29,6 @@ export interface CampaignProgress {
   readonly sent: number;
   readonly failed: number;
   readonly skipped: number;
-}
-
-/** How long the rest of a campaign will take, given the ceiling it is subject to. */
-export interface CampaignForecast {
-  /** Sends still to make. */
-  readonly remaining: number;
-  /** What this sender may still send today, after what it has already sent. */
-  readonly allowanceToday: number;
-  /** Whole days before the last message goes out. 0 means it finishes today. */
-  readonly daysToFinish: number;
-  /**
-   * True while the sender is still ramping. Worth surfacing loudly: a new number is capped at
-   * 20 a day, so a 5,000-person campaign on a fresh number is a **months**-long proposition
-   * and nobody should discover that after starting it.
-   */
-  readonly inWarmup: boolean;
 }
 
 /** The prospective audience of a draft, worked out without freezing it — a dry run's counts. */
@@ -147,41 +129,6 @@ export async function campaignProgress(
 }
 
 /**
- * Works out how long the remaining sends will take.
- *
- * **This is the number an operator needs before pressing start, not after.** A campaign that
- * will take three weeks because the number is four days old is a decision, and it should be
- * made knowingly rather than discovered.
- */
-export async function forecast(
-  tx: Transaction, senderIdentityId: string, remaining: number, limits: PacingLimits, now = new Date()
-): Promise<CampaignForecast> {
-  const rows = await tx.execute(sql`
-    SELECT count(*) FILTER (WHERE m.sent_at > now() - interval '1 day')::int AS "sentToday",
-           max(m.sent_at) AS "lastSentAt"
-    FROM message m JOIN conversation v ON v.id = m.conversation_id
-    WHERE v.sender_identity_id = ${senderIdentityId}
-      AND m.direction = 'outbound' AND m.sent_at IS NOT NULL`);
-  const row = (rows as unknown as Array<{ sentToday: number; lastSentAt: string | null }>)[0];
-  const sentToday = row?.sentToday ?? 0;
-  const lastSentAt = row?.lastSentAt === null || row?.lastSentAt === undefined
-    ? null : new Date(row.lastSentAt);
-
-  const ceiling = dailyCeiling(limits, lastSentAt, now);
-  const allowanceToday = Math.max(0, ceiling - sentToday);
-  const afterToday = Math.max(0, remaining - allowanceToday);
-
-  // Tomorrow's ceiling is at least today's, and usually higher while ramping — so this is a
-  // deliberate over-estimate rather than an optimistic one. Better to promise slower.
-  const daysToFinish = afterToday === 0 ? 0 : Math.ceil(afterToday / Math.max(1, ceiling));
-
-  return {
-    remaining, allowanceToday, daysToFinish,
-    inWarmup: ceiling < limits.perDay
-  };
-}
-
-/**
  * Freezes the audience into `campaign_recipient` rows.
  *
  * Snapshotting is the point: an import that grows after launch, or a contact deleted
@@ -257,7 +204,7 @@ export async function snapshotAudience(
 /**
  * Turns pending recipients into queued messages, up to `limit`.
  *
- * Called by the gateway on each sweep with whatever allowance the sender has left. Returns how
+ * Called by the gateway on each sweep with however many the anti-ban policy lets it queue. Returns how
  * many it queued, so the caller can stop when a campaign is done rather than polling it.
  *
  * Idempotent per recipient: the row moves `pending` → `queued` in the same statement that
@@ -268,12 +215,8 @@ export async function dispatchCampaign(
   tenant: TenantWork, kms: KmsDriver,
   input: {
     orgId: string; campaignId: string; senderIdentityId: string; body: string; limit: number;
-    /** Most identical message bodies this sender may hold within a rolling 24h (Layer 3 / D-26). */
-    identicalBodyCap: number;
     /** Policy gates an admin lifted for this campaign (`engagement`, `cooldown`, `duplicate_campaign`). */
     gateOverrides?: readonly string[];
-    /** Advisory sender (D-29): the identical-body cap is computed but not enforced. */
-    advisory?: boolean;
   }
 ): Promise<number> {
   if (input.limit <= 0) return 0;
@@ -304,11 +247,6 @@ export async function dispatchCampaign(
       customFields: Record<string, unknown> | null; openingEnc: Uint8Array | null;
     }>;
 
-    // Identical-body backstop (docs/08-antiban.md, Layer 3 / D-26): cap how many messages with the
-    // SAME body this sender holds within a rolling 24h. Spintax / {{name}} make bodies differ, so
-    // this only bites a no-variation blast. The count per body is cached, so a no-variation batch
-    // costs one query, not one per recipient.
-    const identicalSeen = new Map<string, number>();
     let queued = 0;
 
     for (const recipient of batch) {
@@ -325,7 +263,7 @@ export async function dispatchCampaign(
       }
 
       // Render this recipient's copy first — spintax picks a wording, {{name}} fills from the
-      // contact (D-26) — because the identical-body check keys off the rendered body's blind index.
+      // contact (D-26) — because the stored blind index is of the rendered body.
       // {{name}} plus any of the org's custom fields ({{city}}, {{stage}}…); an unset one is blank.
       const vars: Record<string, string> = {};
       for (const [k, v] of Object.entries(recipient.customFields ?? {})) vars[k.toLowerCase()] = String(v);
@@ -334,22 +272,6 @@ export async function dispatchCampaign(
         ? new TextDecoder().decode(kms.decrypt(recipient.openingEnc))
         : renderBody(input.body, { ...vars, name: recipient.contactName ?? '' });
       const hmac = kms.blindIndex(body);
-
-      let already = identicalSeen.get(hmac);
-      if (already === undefined) {
-        const c = await tx.execute(sql`
-          SELECT count(*)::int AS n FROM message m
-          JOIN conversation v ON v.id = m.conversation_id
-          WHERE v.sender_identity_id = ${input.senderIdentityId} AND v.org_id = ${input.orgId}
-            AND m.body_hmac = ${hmac} AND m.created_at > now() - interval '1 day'`);
-        already = (c as unknown as Array<{ n: number }>)[0]!.n;
-      }
-      if (already >= input.identicalBodyCap && !input.advisory) {
-        // Too many identical bodies this window — leave this recipient pending (never failed: it
-        // has not gone wrong, it waits for the window to free or for the operator to add variation).
-        identicalSeen.set(hmac, already);
-        continue;
-      }
 
       // One conversation per contact per sender, reused if it exists — a campaign message
       // belongs in the same thread as everything else, not in a parallel history.
@@ -374,7 +296,6 @@ export async function dispatchCampaign(
         UPDATE campaign_recipient
         SET status = 'queued', message_id = ${messageId}, attempted_at = now()
         WHERE id = ${recipient.id} AND org_id = ${input.orgId}`);
-      identicalSeen.set(hmac, already + 1);
       queued += 1;
     }
     return queued;
@@ -386,7 +307,7 @@ export async function dispatchCampaign(
  * messages, and completes it once nothing is left.
  *
  * Kept separate from dispatch because the two answer different questions and run at different
- * times — dispatch is rate-limited, reconciliation is cheap and wants to run every sweep.
+ * times — dispatch is batched, reconciliation is cheap and wants to run every sweep.
  */
 export async function reconcileCampaign(
   tx: Transaction, orgId: string, campaignId: string

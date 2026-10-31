@@ -1,9 +1,5 @@
 /**
- * Typing simulation — P6 anti-ban, the human-rhythm layer (docs/08-antiban.md, D-24).
- *
- * Layers 1–2 decide *how much* a number sends, circadian decides *when*, the contact-graph gate
- * decides *to whom*. This is the smallest, most cosmetic layer: it makes each individual send
- * *look* human. A real person sees the "typing…" bubble for a beat before a message lands; a bot
+ * Typing simulation (D-24): it makes each individual send *look* human. A real person sees the "typing…" bubble for a beat before a message lands; a bot
  * fires instantly with no bubble, and an instant zero-delay send is a documented tell. So before
  * a send the gateway emits a `composing` presence, waits a beat proportional to the message
  * length, then sends — this module computes only that beat.
@@ -14,11 +10,11 @@
 
 /**
  * Milliseconds "spent typing" per character, and its spread. Gaussian around the mean because
- * uniform random is itself a detectable signature (the same reason the inter-send jitter is).
+ * uniform random is itself a detectable signature (the same reason the gap between sends is random).
  *
- * This is a **compressed** beat, not literal typing time. docs/08-antiban.md frames the layer as
+ * This is a **compressed** beat, not literal typing time. The original design framed it as
  * ~45 WPM, which for a paragraph is 30-plus seconds — realistic to *type*, but a half-minute
- * "typing…" bubble before every send would stall a paced queue for no anti-ban gain (the tell we
+ * "typing…" bubble before every send would stall the queue for no gain (the tell we
  * are removing is the *instant* send, not a fast one). So the rate is tuned to a plausible pause
  * that stays inside the clamp window for ordinary message lengths and only saturates for very
  * long bodies.

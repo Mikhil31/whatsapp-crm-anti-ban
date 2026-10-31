@@ -39,7 +39,6 @@
     "lint:fix": "eslint . --fix",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:sim": "vitest run --config vitest.sim.config.ts",
     "test:e2e": "playwright test",
     "verify": "bash scripts/verify.sh",
     "test:live": "playwright test --config playwright.live.config.ts",

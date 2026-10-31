@@ -1,9 +1,9 @@
 # Database reference (generated)
 
-Generated from the live database on 2026-10-21 by `npm run db:docs`. **Do not edit by hand**; change the schema or `packages/db/src/table-notes.ts` and regenerate.
+Generated from the live database on 2026-10-30 by `npm run db:docs`. **Do not edit by hand**; change the schema or `packages/db/src/table-notes.ts` and regenerate.
 For the optimisations and the main queries, see [`35-database-and-queries.md`](../35-database-and-queries.md).
 
-**32 tables, 71 foreign keys, 28 row-level-security policies, 3 triggers, 2 functions.**
+**32 tables, 70 foreign keys, 28 row-level-security policies, 3 triggers, 2 functions.**
 
 Every tenant table has `org_id` and a row-level-security policy: the app runs each request as the restricted `crm_app` role with `app.org_id` set, so a forgotten `WHERE org_id` returns nothing instead of leaking.
 
@@ -13,68 +13,68 @@ Every tenant table has `org_id` and a row-level-security policy: the app runs ea
 
 | Table | What it is for | Rows now |
 |---|---|---|
-| [`ai_run`](#ai_run) | One row each time the AI assistant sends, tries, or is held back (and why), with the model and token counts, so its work and cost can be checked. | 31 |
-| [`audit_log`](#audit_log) | Append-only record of who did what and when: sign-ins, reassignments, overrides, exports. The app role cannot update or delete rows. | 1309 |
-| [`key_rotation_state`](#key_rotation_state) | One row for the whole install: whether the background re-encryption of a key rotation is paused, and how much it has moved. Not per org, because the encryption key is not. | 1 |
-| [`sender_health_event`](#sender_health_event) | A timeline of what happened to a number’s health: restriction suspected or cleared, possible ban, recovery started. | 6 |
+| [`ai_run`](#ai_run) | One row each time the AI assistant sends, tries, or is held back (and why), with the model and token counts, so its work and cost can be checked. | 0 |
+| [`audit_log`](#audit_log) | Append-only record of who did what and when: sign-ins, reassignments, overrides, exports. The app role cannot update or delete rows. | 7 |
+| [`key_rotation_state`](#key_rotation_state) | One row for the whole install: whether the background re-encryption of a key rotation is paused, and how much it has moved. Not per org, because the encryption key is not. | 0 |
+| [`sender_health_event`](#sender_health_event) | A timeline of what happened to a number: refused by WhatsApp, logged out unasked, or removed on the phone. | 3 |
 
 ### Campaigns
 
 | Table | What it is for | Rows now |
 |---|---|---|
-| [`ai_job`](#ai_job) | The AI assistant’s waiting list: instructions and wording requests, run one at a time per org. Shows who is queued, what is running and what finished; only a queued one can be cancelled. | 13 |
-| [`ai_setting`](#ai_setting) | The AI assistant’s switch for an org: on or off, its instructions, a daily message limit, and who accepted the data-sharing note. Off until an admin accepts. | 3 |
+| [`ai_job`](#ai_job) | The AI assistant’s waiting list: instructions and wording requests, run one at a time per org. Shows who is queued, what is running and what finished; only a queued one can be cancelled. | 2 |
+| [`ai_setting`](#ai_setting) | The AI assistant’s switch for an org: on or off, its instructions, a daily message limit, and who accepted the data-sharing note. Off until an admin accepts. | 1 |
 | [`ai_template`](#ai_template) | A saved AI template: what an owner described in plain words and the instructions the AI wrote from it, kept together to pick again. The locked always-on rules are not stored here; they are added on every reply. | 0 |
-| [`campaign`](#campaign) | A bulk send: the message, the number it goes from, its audience, its state (draft, running, paused…) and pacing results. | 34 |
-| [`campaign_recipient`](#campaign_recipient) | One person in a campaign. Acts as the queue: the gateway turns recipients into messages only as fast as the anti-ban limits allow, and records why anyone was skipped. | 174 |
+| [`campaign`](#campaign) | A bulk send: the message, the number it goes from, its audience, its state (draft, running, paused…) and results. | 5 |
+| [`campaign_recipient`](#campaign_recipient) | One person in a campaign. Acts as the queue: the gateway turns recipients into messages a small batch at a time, and records why anyone was skipped. | 50 |
 
 ### Contacts
 
 | Table | What it is for | Rows now |
 |---|---|---|
-| [`contact`](#contact) | A person you talk to: display name, custom fields, source and a do-not-contact flag. Phone numbers and emails live in contact_identity, not here. | 283 |
-| [`contact_identity`](#contact_identity) | One way to reach or recognise a contact: a phone number, an email, or a WhatsApp privacy address. A contact can have several. | 468 |
-| [`contact_tag`](#contact_tag) | Which contacts carry which tags. One row per contact and tag. | 572 |
-| [`custom_field`](#custom_field) | The vocabulary of extra fields an org has defined for contacts (city, experience…), with a type, so values are checked and {{city}} works in campaigns. | 9 |
-| [`segment`](#segment) | A saved audience: a stored filter whose matching people are recomputed whenever it is used. | 14 |
-| [`tag`](#tag) | A label such as "pune" or "interview-stage". Unique per org by name. | 70 |
+| [`contact`](#contact) | A person you talk to: display name, custom fields, source and a do-not-contact flag. Phone numbers and emails live in contact_identity, not here. | 63 |
+| [`contact_identity`](#contact_identity) | One way to reach or recognise a contact: a phone number, an email, or a WhatsApp privacy address. A contact can have several. | 63 |
+| [`contact_tag`](#contact_tag) | Which contacts carry which tags. One row per contact and tag. | 0 |
+| [`custom_field`](#custom_field) | The vocabulary of extra fields an org has defined for contacts (city, experience…), with a type, so values are checked and {{city}} works in campaigns. | 0 |
+| [`segment`](#segment) | A saved audience: a stored filter whose matching people are recomputed whenever it is used. | 0 |
+| [`tag`](#tag) | A label such as "pune" or "interview-stage". Unique per org by name. | 0 |
 
 ### Import
 
 | Table | What it is for | Rows now |
 |---|---|---|
-| [`import_row`](#import_row) | The ledger for one row of an upload: what it said, what the dry run decided, and which contact it produced. | 763 |
-| [`import_run`](#import_run) | One uploaded spreadsheet and what became of it: file hash (to refuse duplicates), counts, and whether it was committed or superseded. | 100 |
+| [`import_row`](#import_row) | The ledger for one row of an upload: what it said, what the dry run decided, and which contact it produced. | 0 |
+| [`import_run`](#import_run) | One uploaded spreadsheet and what became of it: file hash (to refuse duplicates), counts, and whether it was committed or superseded. | 0 |
 
 ### Inbox
 
 | Table | What it is for | Rows now |
 |---|---|---|
 | [`canned_reply`](#canned_reply) | A saved reply an agent can insert with a shortcut, with {{name}}-style placeholders. | 0 |
-| [`conversation`](#conversation) | One chat thread between one contact and one of your numbers. Holds the owner, open/closed status, unread count and timing. | 51 |
-| [`conversation_participant`](#conversation_participant) | Extra people on a chat beside its owner. Participants may reply; only admins add or remove them. | 1 |
-| [`conversation_presence`](#conversation_presence) | Who has a chat open right now, refreshed by a heartbeat every few seconds. Throwaway rows, never history. | 4 |
-| [`internal_note`](#internal_note) | A team-only note on a thread. Kept apart from message so a note can never be sent to the customer. | 12 |
-| [`media_asset`](#media_asset) | An attachment file: its type (decided from the file’s bytes), size and storage key. The bytes live in the storage driver, not the database. | 12 |
-| [`message`](#message) | One message in or out of a thread: encrypted body, delivery status, who sent it, optional attachment and campaign. Inserting an outbound queued row wakes the gateway. | 141 |
+| [`conversation`](#conversation) | One chat thread between one contact and one of your numbers. Holds the owner, open/closed status, unread count and timing. | 64 |
+| [`conversation_participant`](#conversation_participant) | Extra people on a chat beside its owner. Participants may reply; only admins add or remove them. | 0 |
+| [`conversation_presence`](#conversation_presence) | Who has a chat open right now, refreshed by a heartbeat every few seconds. Throwaway rows, never history. | 0 |
+| [`internal_note`](#internal_note) | A team-only note on a thread. Kept apart from message so a note can never be sent to the customer. | 0 |
+| [`media_asset`](#media_asset) | An attachment file: its type (decided from the file’s bytes), size and storage key. The bytes live in the storage driver, not the database. | 0 |
+| [`message`](#message) | One message in or out of a thread: encrypted body, delivery status, who sent it, optional attachment and campaign. Inserting an outbound queued row wakes the gateway. | 81 |
 
 ### WhatsApp numbers
 
 | Table | What it is for | Rows now |
 |---|---|---|
-| [`channel_auth_state`](#channel_auth_state) | The encrypted login credentials Baileys needs to keep a number linked across restarts. Losing the encryption key loses these. | 59 |
-| [`channel_session`](#channel_session) | The live connection state of a number (connected, QR waiting, unlink requested). Churns constantly; three triggers here wake the gateway. | 11 |
-| [`sender_identity`](#sender_identity) | One of your WhatsApp numbers and its reputation: warm-up stage, health score, risk band, restriction state and recovery pauses. | 12 |
+| [`channel_auth_state`](#channel_auth_state) | The encrypted login credentials Baileys needs to keep a number linked across restarts. Losing the encryption key loses these. | 0 |
+| [`channel_session`](#channel_session) | The live connection state of a number (connected, QR waiting, unlink requested). Churns constantly; three triggers here wake the gateway. | 0 |
+| [`sender_identity`](#sender_identity) | One of your WhatsApp numbers: its name, phone number and whether it is linked. | 15 |
 
 ### Workspaces and people
 
 | Table | What it is for | Rows now |
 |---|---|---|
-| [`api_key`](#api_key) | Machine access for integrations such as JobPortal: a hashed secret plus the scopes it may use. Also looked up before the org is known. | 0 |
-| [`app_user`](#app_user) | A person who can sign in: name, email, password hash. Belongs to an org through org_membership, not directly. | 12 |
-| [`org`](#org) | A customer workspace. Every other table points back to one org, and row-level security keeps each org’s rows invisible to the rest. | 3 |
-| [`org_membership`](#org_membership) | Links a person to an org and gives them a role (admin or agent). Roles live here so one person could join several orgs later. | 12 |
-| [`session`](#session) | A signed-in browser session for the web app. Looked up before the org is known, so it has no row-level security. | 276 |
+| [`api_key`](#api_key) | Machine access for integrations such as JobPortal: a hashed secret plus the scopes it may use. Also looked up before the org is known. | 1 |
+| [`app_user`](#app_user) | A person who can sign in: name, email, password hash. Belongs to an org through org_membership, not directly. | 4 |
+| [`org`](#org) | A customer workspace. Every other table points back to one org, and row-level security keeps each org’s rows invisible to the rest. | 15 |
+| [`org_membership`](#org_membership) | Links a person to an org and gives them a role (admin or agent). Roles live here so one person could join several orgs later. | 4 |
+| [`session`](#session) | A signed-in browser session for the web app. Looked up before the org is known, so it has no row-level security. | 3 |
 
 ## Table details
 
@@ -100,8 +100,8 @@ Row-level security: on and forced.
 
 **References:**
 
-- `requested_by` → `app_user.id` (on delete set null)
 - `org_id` → `org.id` (on delete cascade)
+- `requested_by` → `app_user.id` (on delete set null)
 
 **Indexes:**
 
@@ -134,9 +134,9 @@ Row-level security: on and forced.
 
 **References:**
 
-- `campaign_id` → `campaign.id` (on delete set null)
-- `conversation_id` → `conversation.id` (on delete set null)
 - `org_id` → `org.id` (on delete cascade)
+- `conversation_id` → `conversation.id` (on delete set null)
+- `campaign_id` → `campaign.id` (on delete set null)
 
 **Indexes:**
 
@@ -167,9 +167,9 @@ Row-level security: on and forced.
 
 **References:**
 
-- `bot_user_id` → `app_user.id` (on delete set null)
-- `consent_accepted_by` → `app_user.id` (on delete set null)
 - `org_id` → `org.id` (on delete cascade)
+- `consent_accepted_by` → `app_user.id` (on delete set null)
+- `bot_user_id` → `app_user.id` (on delete set null)
 
 **Policies:**
 
@@ -198,8 +198,8 @@ Row-level security: on and forced.
 
 **References:**
 
-- `created_by` → `app_user.id` (on delete set null)
 - `org_id` → `org.id` (on delete cascade)
+- `created_by` → `app_user.id` (on delete set null)
 
 **Indexes:**
 
@@ -297,7 +297,7 @@ Row-level security: on and forced.
 
 ### campaign
 
-_Campaigns._ A bulk send: the message, the number it goes from, its audience, its state (draft, running, paused…) and pacing results.
+_Campaigns._ A bulk send: the message, the number it goes from, its audience, its state (draft, running, paused…) and results.
 
 Row-level security: on and forced.
 
@@ -325,13 +325,13 @@ Row-level security: on and forced.
 
 **References:**
 
-- `media_asset_id` → `media_asset.id` (on delete set null)
-- `ai_template_id` → `ai_template.id` (on delete set null)
-- `from_segment_id` → `segment.id` (on delete set null)
-- `from_tag_id` → `tag.id` (on delete set null)
-- `from_import_run_id` → `import_run.id` (on delete set null)
-- `sender_identity_id` → `sender_identity.id` (on delete restrict)
 - `org_id` → `org.id` (on delete cascade)
+- `sender_identity_id` → `sender_identity.id` (on delete restrict)
+- `from_import_run_id` → `import_run.id` (on delete set null)
+- `from_tag_id` → `tag.id` (on delete set null)
+- `from_segment_id` → `segment.id` (on delete set null)
+- `ai_template_id` → `ai_template.id` (on delete set null)
+- `media_asset_id` → `media_asset.id` (on delete set null)
 
 **Indexes:**
 
@@ -343,7 +343,7 @@ Row-level security: on and forced.
 
 ### campaign_recipient
 
-_Campaigns._ One person in a campaign. Acts as the queue: the gateway turns recipients into messages only as fast as the anti-ban limits allow, and records why anyone was skipped.
+_Campaigns._ One person in a campaign. Acts as the queue: the gateway turns recipients into messages a small batch at a time, and records why anyone was skipped.
 
 Row-level security: on and forced.
 
@@ -357,13 +357,15 @@ Row-level security: on and forced.
 | `skip_reason` | text | yes |  |  |
 | `message_id` | uuid | yes |  |  |
 | `attempted_at` | timestamp with time zone | yes |  |  |
+| `opening_enc` | bytea | yes |  |  |
+| `opening_tries` | integer | no | 0 |  |
 
 **References:**
 
-- `message_id` → `message.id` (on delete set null)
-- `contact_id` → `contact.id` (on delete cascade)
-- `campaign_id` → `campaign.id` (on delete cascade)
 - `org_id` → `org.id` (on delete cascade)
+- `campaign_id` → `campaign.id` (on delete cascade)
+- `contact_id` → `contact.id` (on delete cascade)
+- `message_id` → `message.id` (on delete set null)
 
 **Indexes:**
 
@@ -441,8 +443,6 @@ Row-level security: on and forced.
 | `connection_state` | text | no | 'closed'::text |  |
 | `last_connected_at` | timestamp with time zone | yes |  |  |
 | `disconnect_reason` | text | yes |  |  |
-| `disconnect_code` | integer | yes |  |  |
-| `reconnect_attempts` | integer | no | 0 |  |
 | `qr_expires_at` | timestamp with time zone | yes |  |  |
 | `updated_at` | timestamp with time zone | no | now() |  |
 | `link_requested_mode` | text | yes |  |  |
@@ -452,6 +452,7 @@ Row-level security: on and forced.
 | `link_error` | text | yes |  |  |
 | `unlink_requested_at` | timestamp with time zone | yes |  |  |
 | `decrypt_burst_at` | timestamp with time zone | yes |  |  |
+| `own_decrypt_burst_at` | timestamp with time zone | yes |  |  |
 
 **References:**
 
@@ -496,8 +497,8 @@ Row-level security: on and forced.
 
 **References:**
 
-- `owner_user_id` → `app_user.id` (on delete set null)
 - `org_id` → `org.id` (on delete cascade)
+- `owner_user_id` → `app_user.id` (on delete set null)
 
 **Indexes:**
 
@@ -530,8 +531,8 @@ Row-level security: on and forced.
 
 **References:**
 
-- `contact_id` → `contact.id` (on delete cascade)
 - `org_id` → `org.id` (on delete cascade)
+- `contact_id` → `contact.id` (on delete cascade)
 
 **Indexes:**
 
@@ -557,9 +558,9 @@ Row-level security: on and forced.
 
 **References:**
 
-- `tag_id` → `tag.id` (on delete cascade)
-- `contact_id` → `contact.id` (on delete cascade)
 - `org_id` → `org.id` (on delete cascade)
+- `contact_id` → `contact.id` (on delete cascade)
+- `tag_id` → `tag.id` (on delete cascade)
 
 **Indexes:**
 
@@ -594,10 +595,10 @@ Row-level security: on and forced.
 
 **References:**
 
-- `assignee_user_id` → `app_user.id` (on delete set null)
-- `sender_identity_id` → `sender_identity.id` (on delete restrict)
-- `contact_id` → `contact.id` (on delete cascade)
 - `org_id` → `org.id` (on delete cascade)
+- `contact_id` → `contact.id` (on delete cascade)
+- `sender_identity_id` → `sender_identity.id` (on delete restrict)
+- `assignee_user_id` → `app_user.id` (on delete set null)
 
 **Indexes:**
 
@@ -624,10 +625,10 @@ Row-level security: on and forced.
 
 **References:**
 
-- `added_by_user_id` → `app_user.id` (on delete set null)
-- `user_id` → `app_user.id` (on delete cascade)
-- `conversation_id` → `conversation.id` (on delete cascade)
 - `org_id` → `org.id` (on delete cascade)
+- `conversation_id` → `conversation.id` (on delete cascade)
+- `user_id` → `app_user.id` (on delete cascade)
+- `added_by_user_id` → `app_user.id` (on delete set null)
 
 **Indexes:**
 
@@ -654,9 +655,9 @@ Row-level security: on and forced.
 
 **References:**
 
-- `user_id` → `app_user.id` (on delete cascade)
-- `conversation_id` → `conversation.id` (on delete cascade)
 - `org_id` → `org.id` (on delete cascade)
+- `conversation_id` → `conversation.id` (on delete cascade)
+- `user_id` → `app_user.id` (on delete cascade)
 
 **Indexes:**
 
@@ -714,9 +715,9 @@ Row-level security: on and forced.
 
 **References:**
 
-- `contact_id` → `contact.id` (on delete set null)
-- `import_run_id` → `import_run.id` (on delete cascade)
 - `org_id` → `org.id` (on delete cascade)
+- `import_run_id` → `import_run.id` (on delete cascade)
+- `contact_id` → `contact.id` (on delete set null)
 
 **Indexes:**
 
@@ -782,9 +783,9 @@ Row-level security: on and forced.
 
 **References:**
 
-- `author_user_id` → `app_user.id` (on delete set null)
-- `conversation_id` → `conversation.id` (on delete cascade)
 - `org_id` → `org.id` (on delete cascade)
+- `conversation_id` → `conversation.id` (on delete cascade)
+- `author_user_id` → `app_user.id` (on delete set null)
 
 **Indexes:**
 
@@ -838,8 +839,8 @@ Row-level security: on and forced.
 
 **References:**
 
-- `source_asset_id` → `media_asset.id` (on delete set null)
 - `org_id` → `org.id` (on delete cascade)
+- `source_asset_id` → `media_asset.id` (on delete set null)
 
 **Indexes:**
 
@@ -881,14 +882,16 @@ Row-level security: on and forced.
 | `dnc_override_reason` | text | yes |  |  |
 | `media_error` | text | yes |  |  |
 | `media_failed_at` | timestamp with time zone | yes |  |  |
+| `retry_requests` | integer | no | 0 |  |
+| `last_retry_at` | timestamp with time zone | yes |  |  |
 
 **References:**
 
-- `campaign_id` → `campaign.id` (on delete set null)
-- `sent_by_user_id` → `app_user.id` (on delete set null)
-- `conversation_id` → `conversation.id` (on delete cascade)
-- `org_id` → `org.id` (on delete cascade)
 - `media_id` → `media_asset.id` (on delete set null)
+- `org_id` → `org.id` (on delete cascade)
+- `conversation_id` → `conversation.id` (on delete cascade)
+- `sent_by_user_id` → `app_user.id` (on delete set null)
+- `campaign_id` → `campaign.id` (on delete set null)
 
 **Indexes:**
 
@@ -943,8 +946,8 @@ Row-level security: on and forced.
 
 **References:**
 
-- `user_id` → `app_user.id` (on delete cascade)
 - `org_id` → `org.id` (on delete cascade)
+- `user_id` → `app_user.id` (on delete cascade)
 
 **Indexes:**
 
@@ -985,7 +988,7 @@ Row-level security: on and forced.
 
 ### sender_health_event
 
-_Audit and health._ A timeline of what happened to a number’s health: restriction suspected or cleared, possible ban, recovery started.
+_Audit and health._ A timeline of what happened to a number: refused by WhatsApp, logged out unasked, or removed on the phone.
 
 Row-level security: on and forced.
 
@@ -1002,8 +1005,8 @@ Row-level security: on and forced.
 
 **References:**
 
-- `sender_identity_id` → `sender_identity.id` (on delete cascade)
 - `org_id` → `org.id` (on delete cascade)
+- `sender_identity_id` → `sender_identity.id` (on delete cascade)
 
 **Indexes:**
 
@@ -1015,7 +1018,7 @@ Row-level security: on and forced.
 
 ### sender_identity
 
-_WhatsApp numbers._ One of your WhatsApp numbers and its reputation: warm-up stage, health score, risk band, restriction state and recovery pauses.
+_WhatsApp numbers._ One of your WhatsApp numbers: its name, phone number and whether it is linked.
 
 Row-level security: on and forced.
 
@@ -1029,30 +1032,13 @@ Row-level security: on and forced.
 | `owner_user_id` | uuid | yes |  |  |
 | `status` | text | no | 'linking'::text |  |
 | `capabilities_snapshot` | jsonb | yes |  |  |
-| `health` | jsonb | no | '{}'::jsonb |  |
-| `warmup_started_at` | timestamp with time zone | yes |  |  |
-| `last_inbound_at` | timestamp with time zone | yes |  |  |
-| `risk_score` | integer | no | 0 |  |
-| `daily_cap_override` | integer | yes |  |  |
 | `created_at` | timestamp with time zone | no | now() |  |
 | `updated_at` | timestamp with time zone | no | now() |  |
-| `recovery_incident` | text | yes |  |  |
-| `recovery_started_at` | timestamp with time zone | yes |  |  |
-| `recovery_until` | timestamp with time zone | yes |  |  |
-| `enforcement` | text | no | 'enforce'::text |  |
-| `advisory_reason` | text | yes |  |  |
-| `advisory_set_by` | uuid | yes |  |  |
-| `advisory_set_at` | timestamp with time zone | yes |  |  |
-| `advisory_bypass_count` | integer | no | 0 |  |
-| `advisory_last_bypass` | text | yes |  |  |
-| `restriction_state` | text | no | 'ok'::text |  |
-| `restriction_since` | timestamp with time zone | yes |  |  |
 
 **References:**
 
-- `advisory_set_by` → `app_user.id` (on delete set null)
-- `owner_user_id` → `app_user.id` (on delete set null)
 - `org_id` → `org.id` (on delete cascade)
+- `owner_user_id` → `app_user.id` (on delete set null)
 
 **Indexes:**
 
@@ -1084,8 +1070,8 @@ Row-level security: **off**.
 
 **References:**
 
-- `org_id` → `org.id` (on delete cascade)
 - `user_id` → `app_user.id` (on delete cascade)
+- `org_id` → `org.id` (on delete cascade)
 
 **Indexes:**
 

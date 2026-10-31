@@ -88,8 +88,7 @@ That is 32 tables. A person's number or email is not on `contact`: it is a row i
 | **A list page is one query, not N+1** | `GET /contacts` builds `identities` and `tags` with correlated `json_agg` subselects | 50 contacts with their numbers and tags in one round trip. |
 | **Keyset paging, not offsets** | `GET /contacts?cursor=` on `created_at` | Page 500 costs the same as page 1 (newest-added order only; other orders return the first page). |
 | **No per-row tag dropdowns** | one shared `<datalist id="all-tags">` on the Contacts page | The page was 5.7 MB at 50 people and 129 tags before; now it does not grow with people × tags. |
-| **Encrypted bodies still searchable for duplicates** | `message.body_hmac` (a blind index from the KMS) | The identical-body anti-ban check compares HMACs without decrypting. |
-| **Identical-body check cached per batch** | `identicalSeen` map in `dispatchCampaign` | A no-variation blast costs one query for the check, not one per recipient. |
+| **Encrypted bodies still searchable for duplicates** | `message.body_hmac` (a blind index from the KMS) | Duplicate and search checks compare HMACs without decrypting. |
 | **Safe previews, small and cacheable** | `GET /media/:id/thumb`: decoded and re-encoded to 320 px WebP (`sharp`), `Cache-Control: private, max-age=3600` | Lists show pictures at a few KB each, and the original is never shown inline. |
 | **GIFs are converted once, at upload** | `storeCampaignPicture` runs ffmpeg and stores the clip next to the GIF (`source_asset_id`) | Sending never waits on a conversion; every recipient gets the stored clip. |
 | **Same picture, one stored copy** | the campaign picture path reuses `storeOutboundMedia`'s SHA-256 dedupe | Re-uploading the same offer image is free. |
@@ -201,7 +200,7 @@ Run it after `npm run db:migrate`. A new table needs a note in `packages/db/src/
 
 ## 7 · Why there is no cache and no extra data layers (and when there should be)
 
-**What is actually there.** The API talks to Postgres through `drizzle-orm` (a thin query builder) over the `postgres` driver. That is the whole data path: **no Redis or Memcached, no in-process result cache, no materialized views, no read replica, no search server, no connection pooler (PgBouncer), no repository or service layer between a route and its SQL.** The only in-memory state is small and deliberate: the generation rate limit counter (`apps/api/src/rate-limit.ts`, one API process) and the per-campaign identical-body check in `dispatchCampaign`. The browser may keep media thumbnails for an hour (`Cache-Control: private, max-age=3600`); everything else is `no-store`.
+**What is actually there.** The API talks to Postgres through `drizzle-orm` (a thin query builder) over the `postgres` driver. That is the whole data path: **no Redis or Memcached, no in-process result cache, no materialized views, no read replica, no search server, no connection pooler (PgBouncer), no repository or service layer between a route and its SQL.** The only in-memory state is small and deliberate: the generation rate limit counter (`apps/api/src/rate-limit.ts`, one API process). The browser may keep media thumbnails for an hour (`Cache-Control: private, max-age=3600`); everything else is `no-store`.
 
 **Why that is right for now**
 1. **It is measured fast.** The calls the Contacts page makes take 20 to 40 ms each on a production build (docs/38). Postgres with the indexes in section 3 is already faster than the cost of asking a cache. Slowness people feel comes from the web side (a dev server compiling pages, a 1 MB Contacts page), not from SQL.

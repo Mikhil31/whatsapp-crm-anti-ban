@@ -96,7 +96,7 @@ export function LinkPanel(
       setStatus(next);
       if (next.state === 'connected') {
         setActive(false); setRemaining(null); setJustLinked(true);
-        // The card around this panel (badge, health, "Linked" line) is server-rendered, so re-read it now
+        // The card around this panel (badge, "Linked" line) is server-rendered, so re-read it now
         // instead of leaving it saying "Not linked" until someone reloads the page.
         router.refresh();
       }
