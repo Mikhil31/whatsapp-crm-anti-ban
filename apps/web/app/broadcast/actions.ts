@@ -4,9 +4,9 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import {
   createCampaign, startCampaign, pauseCampaign, cancelCampaign, createSegment, previewSegmentCount, uploadCampaignPicture,
-  CrmApiError, NotAuthenticatedError
+  previewCampaign, getFillIns, CrmApiError, NotAuthenticatedError
 } from '@/lib/crm';
-import type { CampaignPicture, CampaignTarget, SegmentDefinition } from '@/lib/crm';
+import type { CampaignPicture, CampaignPreview, CampaignTarget, FillInReport, SegmentDefinition } from '@/lib/crm';
 
 /** Builds a segment filter from the inline audience builder, including only criteria that were set. */
 function filterFromForm(get: (name: string) => string): SegmentDefinition {
@@ -87,6 +87,9 @@ export async function createCampaignAction(formData: FormData): Promise<void> {
   const purpose = String(formData.get('purpose') ?? '').trim();
   // A checkbox sends nothing when it is off; off is a choice, so it is sent as false.
   const mediaAfterReply = formData.get('mediaAfterReply') === 'on';
+  // The answer to "N people have no <field>" (CW-7.7): leave them out, or fill the gap with a fallback. Anything else = send anyway.
+  const blankChoice = String(formData.get('blankFillInChoice') ?? '');
+  const fillInFallback = String(formData.get('fillInFallback') ?? '').trim();
 
   // Inline audience: a filter built right in the form. It becomes a segment (so it is resolved and
   // frozen at launch like any other audience); `keepAudience` decides whether it is listed for reuse.
@@ -127,7 +130,10 @@ export async function createCampaignAction(formData: FormData): Promise<void> {
   try {
     const created = await createCampaign({
       name, body, senderIdentityId, mediaAfterReply, ...(mediaAssetId !== '' ? { mediaAssetId } : {}),
-      ...(purpose !== '' ? { purpose } : {}), ...chosen[0]!
+      ...(purpose !== '' ? { purpose } : {}),
+      ...(blankChoice === 'skip' ? { blankFillInChoice: 'skip' as const } : {}),
+      ...(blankChoice === 'fallback' && fillInFallback !== '' ? { blankFillInChoice: 'fallback' as const, fillInFallback } : {}),
+      ...chosen[0]!
     });
     id = created.id;
   } catch (error) {
@@ -147,9 +153,34 @@ export async function startCampaignAction(formData: FormData): Promise<void> {
   // anyone else); a plain start sends no override at all.
   const overrideGates = formData.getAll('overrideGates').map(String);
   const reason = String(formData.get('reason') ?? '').trim();
-  await control(id, () => startCampaign(
-    id, overrideGates.length > 0 ? { overrideGates, reason } : undefined
-  ));
+  // The yes to launching with a `{{key}}` that is not a column (CW-7.7 AC4).
+  const confirmUnknownFillIns = formData.get('confirmUnknownFillIns') === 'yes';
+  await control(id, () => startCampaign(id, {
+    ...(overrideGates.length > 0 ? { overrideGates, reason } : {}),
+    ...(confirmUnknownFillIns ? { confirmUnknownFillIns } : {})
+  }));
+}
+
+/**
+ * What the start button needs to know before it sends: who is still in a live campaign on the same number, who got a campaign from
+ * this number lately, and which `{{keys}}` are not columns. Null when it cannot be read, so Start just goes ahead and the server decides.
+ */
+export async function startCheckAction(id: string): Promise<CampaignPreview | null> {
+  try {
+    return await previewCampaign(id);
+  } catch {
+    return null;
+  }
+}
+
+/** The fill-ins the chosen audience offers, for the Insert list; null when there is no audience to read yet or it cannot be read. */
+export async function fillInsAction(audience: { fromTagId?: string; fromImportRunId?: string; fromSegmentId?: string }): Promise<FillInReport | null> {
+  if (Object.values(audience).every((v) => v === undefined || v === '')) return null;
+  try {
+    return await getFillIns(audience);
+  } catch {
+    return null;
+  }
 }
 
 /** Pauses a running campaign. */

@@ -11,6 +11,7 @@ import { PictureField } from './picture-field';
 import { TemplatePicker } from './template-picker';
 import { SubmitButton } from './submit-button';
 import { VariationWarning } from './variation-warning';
+import { MessageBox } from './message-box';
 
 /** Rendered per request — the sender and tag pickers reflect live data. */
 export const dynamic = 'force-dynamic';
@@ -106,18 +107,7 @@ export default async function NewCampaignPage(
               <span className="text-sm font-medium">Name</span>
               <input name="name" required maxLength={200} placeholder="e.g. October Pune outreach" className="field" />
             </label>
-            <label className="flex flex-col gap-1.5">
-              <span className="text-sm font-medium">Message</span>
-              <textarea
-                name="body" required maxLength={4096} rows={5}
-                placeholder="What every recipient receives…" className="field"
-              />
-              <span className="text-sm text-muted">
-                Use <code>{'{{name}}'}</code> for the contact&apos;s name, and <code>{'{Hi|Hey|Hello}'}</code> to
-                vary the wording — each recipient gets a slightly different message, which is safer than 500
-                identical sends.
-              </span>
-            </label>
+            <MessageBox />
             <VariationWarning />
             <label className="mt-4 flex flex-col gap-1.5">
               <span className="text-sm font-medium">Why are you messaging these people? <span className="font-normal text-muted">(optional)</span></span>
