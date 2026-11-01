@@ -99,7 +99,7 @@ const STEP_ORDER: StepKey[] = ['queued', 'waiting', 'typing', 'sent', 'delivered
  * reason, or failed with one. "Waiting" and "typing" are inferred from the time the lane is due to send it, which the engine stores
  * only for the message at the head of the lane; any other queued message is just queued.
  */
-export function messageTimeline(m: MessageFacts, now: Date): Timeline {
+export function messageTimeline(m: MessageFacts, now: Date, zone: ZoneOption = {}): Timeline {
   const due = m.dueAt === null ? null : new Date(m.dueAt);
   let stage: number;
   let outcome: Timeline['outcome'] = 'in_flight';
@@ -132,7 +132,7 @@ export function messageTimeline(m: MessageFacts, now: Date): Timeline {
   };
   const steps = STEP_ORDER.map((key, i): TimelineStep => ({
     key,
-    label: key === 'waiting' && waitUntil !== null ? `waiting ${formatWait(waitUntil.getTime() - now.getTime())} (gap between sends)` : key,
+    label: key === 'waiting' && waitUntil !== null ? `waiting ${formatWait(waitUntil.getTime() - now.getTime(), { now, ...zone })} (gap between sends)` : key,
     state: outcome === 'failed' ? (i === 0 ? 'done' : 'todo') : i < stage ? 'done' : i === stage ? 'current' : 'todo',
     at: times[key]
   }));

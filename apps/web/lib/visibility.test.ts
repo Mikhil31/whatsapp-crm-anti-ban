@@ -94,6 +94,18 @@ describe('AC-10.5 waiting counts down from the clock it is given', () => {
       const p = (s: number): string => waitPhrase(s * 1000, { now: NOW, ...tz });
       expect([p(12), p(240), p(3600)]).toEqual(['in 12 s', 'in about 4 min', 'at 11:00']);
     });
+    it('waitPhrase never doubles the word "in"', () => {
+      for (const s of [59, 240, 7200]) {
+        const text = waitPhrase(s * 1000, { now: NOW, ...tz });
+        expect(text).not.toMatch(/^in in|^in at/);
+      }
+    });
+    it('the inbox timeline follows the same rule for a long wait', () => {
+      const label = (s: number): string | undefined =>
+        messageTimeline({ ...base, dueAt: at(s) }, NOW, tz).steps.find((x) => x.key === 'waiting')?.label;
+      expect(label(12)).toBe('waiting 12 s (gap between sends)');
+      expect(label(7800)).toBe('waiting at 12:10 (gap between sends)');
+    });
     it('the number card uses it', () => {
       const lane = { waiting: 3, nextSendAt: at(240), hold: null };
       expect(laneLines(lane, NOW, tz).sending).toBe('Sending next in about 4 min');
