@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useNow } from '@/components/use-now';
-import { etaLines, formatWait, type EtaFacts } from '@/lib/visibility';
+import { etaLines, waitPhrase, type EtaFacts } from '@/lib/visibility';
 import { reachSummary, type ProgressFacts, type Show } from '@/lib/recipient-status';
 
 /** The ring is full when the wait starts; this is the wait it counts against if the row's own gap is not known. */
@@ -99,7 +99,7 @@ export function LivePanel({ id, status, progress, eta, next, serverNow, activeSh
             {running && next !== null && (
               <p className="text-sm" suppressHydrationWarning>
                 Next message to <span className="font-medium">{next.name}</span>
-                {secondsLeft !== null && <span className="tabular-nums text-muted"> · {secondsLeft === 0 ? 'now' : `in ${formatWait(secondsLeft * 1000, { now })}`}</span>}
+                {secondsLeft !== null && <span className="tabular-nums text-muted"> · {secondsLeft === 0 ? 'now' : waitPhrase(secondsLeft * 1000, { now })}</span>}
               </p>
             )}
           </div>
