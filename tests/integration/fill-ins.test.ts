@@ -8,7 +8,7 @@ import {
 import { LocalKms } from '@crm/kms-local';
 import { FakeChannelProvider } from '@crm/channel-fake';
 import { BuiltinPasswordHasher } from '@crm/auth-builtin';
-import { createOrgWithAdmin, createSession } from '@crm/core';
+import { createOrgWithAdmin, createSession, queueCampaignFollowUp, storeInboundMessage } from '@crm/core';
 import { createLogger, type Config } from '@crm/shared';
 import { buildApp } from '../../apps/api/src/app.js';
 import { dispatchCampaigns, type WorkContext } from '../../apps/gateway/src/work.js';
@@ -101,9 +101,13 @@ describe('the fill-in report (CW-7.6)', { timeout: 60_000 }, () => {
     expect(r.status).toBe(200);
     expect(r.body.data.total).toBe(3);
     const byKey = new Map((r.body.data.fields as Array<{ key: string; have: number; sample: string | null }>).map((f) => [f.key, f]));
-    expect(byKey.get('due_date')).toMatchObject({ have: 2, sample: '12 Nov 2026' });
-    expect(byKey.get('name')).toMatchObject({ have: 3, sample: 'Person0 Last' });
-    expect(byKey.get('first_name')).toMatchObject({ have: 3, sample: 'Person0' });
+    expect(byKey.get('due_date')!.have).toBe(2);
+    // The sample is a real person's value (which one depends on id order).
+    expect(['12 Nov 2026', '1 Dec 2026']).toContain(byKey.get('due_date')!.sample);
+    expect(byKey.get('name')!.have).toBe(3);
+    expect(byKey.get('name')!.sample).toMatch(/^Person\d Last$/);
+    expect(byKey.get('first_name')!.have).toBe(3);
+    expect(byKey.get('first_name')!.sample).toMatch(/^Person\d$/);
   });
 
   it('wants exactly one audience', async () => {
@@ -152,5 +156,20 @@ describe('blank fill-ins (CW-7.7)', { timeout: 60_000 }, () => {
     expect((await rows<{ status: string }>(sql`SELECT status FROM campaign WHERE id = ${id}`))[0]!.status).toBe('draft');
 
     expect((await startAs(id, { confirmUnknownFillIns: true })).status).toBe(200);
+  });
+});
+
+describe('the follow-up after a reply (CW-7.7 AC2)', { timeout: 60_000 }, () => {
+  it('uses the fallback in the held-back link too, not a blank', async () => {
+    const { id } = await newCampaign('Hi {{name}} https://example.com/{{due_date}}', { blankFillInChoice: 'fallback', fillInFallback: 'soon' });
+    await startAs(id);
+    await dispatchCampaigns(ctx());
+    // The person with no due date writes back; the held-back link is queued.
+    const stored = await storeInboundMessage(db, kms, {
+      orgId, senderIdentityId: senderId, providerMessageId: 'wamid.fill-ins-1', fromPhoneE164: '+919876500001',
+      fromProviderAddress: '919876500001@s.whatsapp.net', body: 'yes?', contentType: 'text', receivedAt: new Date()
+    });
+    expect(await queueCampaignFollowUp(db, kms, orgId, stored.conversationId)).toBe(true);
+    expect(await sentTexts()).toContain('https://example.com/soon');
   });
 });
