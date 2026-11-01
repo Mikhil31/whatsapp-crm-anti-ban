@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { etaLines, formatWait, hasVariation, laneLines, messageTimeline, quotaLine, type MessageFacts } from './visibility';
+import { etaLines, formatWait, waitPhrase, hasVariation, laneLines, messageTimeline, quotaLine, type MessageFacts } from './visibility';
 
 const NOW = new Date('2026-10-31T10:00:00Z');
 const at = (s: number): string => new Date(NOW.getTime() + s * 1000).toISOString();
@@ -74,19 +74,45 @@ describe('AC-10.5 waiting counts down from the clock it is given', () => {
     expect(formatWait(2 * 3_600_000 + 10 * 60_000)).toBe('2 h 10 min');
     expect(formatWait(-4)).toBe('0 s');
   });
+
+  describe('CW-2.5 countdowns only for short waits', () => {
+    const w = (s: number): string => formatWait(s * 1000, { now: NOW, ...tz });
+    it('under a minute: seconds, ticking', () => {
+      expect(w(59)).toBe('59 s');
+      expect(w(12)).toBe('12 s');
+    });
+    it('1 to 10 minutes: in about N min', () => {
+      expect(w(61)).toBe('in about 1 min');
+      expect(w(240)).toBe('in about 4 min');
+      expect(w(9 * 60 + 59)).toBe('in about 10 min');
+    });
+    it('longer: a clock time, and "tomorrow" for the next day', () => {
+      expect(w(10 * 60 + 1)).toBe('at 10:10');
+      expect(w(23 * 3600)).toBe('at 09:00 tomorrow');
+    });
+    it('waitPhrase reads inside a sentence', () => {
+      const p = (s: number): string => waitPhrase(s * 1000, { now: NOW, ...tz });
+      expect([p(12), p(240), p(3600)]).toEqual(['in 12 s', 'in about 4 min', 'at 11:00']);
+    });
+    it('the number card uses it', () => {
+      const lane = { waiting: 3, nextSendAt: at(240), hold: null };
+      expect(laneLines(lane, NOW, tz).sending).toBe('Sending next in about 4 min');
+      expect(laneLines({ ...lane, nextSendAt: at(7200) }, NOW, tz).sending).toBe('Sending next at 12:00');
+    });
+  });
 });
 
 describe('AC-10.3 the ETA sentence', () => {
   const none = { goNow: 0, afterReset: 0, resetAt: null, goNowEndsAt: null, basis: 'time_only' as const, delayedBy: [] };
 
-  it('Finishes at 17:42 when everything goes in one stretch', () => {
+  it('Done by about 17:42 when everything goes in one stretch', () => {
     const l = etaLines({ ...none, finishAt: '2026-10-31T17:42:00Z', goNow: 500 }, NOW, tz);
-    expect(l.headline).toBe('Finishes at 17:42');
+    expect(l.headline).toBe('Done by about 17:42');
     expect(l.delay).toBeNull();
   });
 
   it('says tomorrow for a finish on the next day', () => {
-    expect(etaLines({ ...none, finishAt: '2026-11-01T02:10:00Z', goNow: 5 }, NOW, tz).headline).toBe('Finishes at 02:10 tomorrow');
+    expect(etaLines({ ...none, finishAt: '2026-11-01T02:10:00Z', goNow: 5 }, NOW, tz).headline).toBe('Done by about 02:10 tomorrow');
   });
 
   it('370 go now, finishing 15:10; 130 after the reset at 09:00 tomorrow', () => {
@@ -109,12 +135,24 @@ describe('AC-10.3 the ETA sentence', () => {
     expect(etaLines({ ...none, finishAt: null }, NOW, tz).headline).toBe('Nothing left to send.');
   });
 
-  it('says what pushed the finish back, longest first, leaving out zeroes', () => {
+  it('CW-3.9 says why it takes this long, and how much is left', () => {
+    const l = etaLines({ ...none, finishAt: at(38 * 60), goNow: 5 }, NOW, tz);
+    expect(l.why).toBe("We send one message every 1 to 50 seconds, like a person would, so WhatsApp doesn't flag your number.");
+    expect(l.left).toBe('38 min left');
+    expect(etaLines({ ...none, finishAt: null }, NOW, tz).why).toBeNull();
+  });
+
+  it('CW-3.9 says what moved the finish: 40 min later, replies first, new-chat limit resets at 09:00', () => {
     const l = etaLines({
-      ...none, finishAt: '2026-10-31T17:42:00Z', goNow: 5,
-      delayedBy: [{ reason: 'quiet_hours', seconds: 3600 }, { reason: 'timelock', seconds: 7500 }, { reason: 'reply_priority', seconds: 0 }]
+      finishAt: '2026-11-01T11:00:00Z', goNow: 5, afterReset: 0, resetAt: '2026-11-01T09:00:00Z', goNowEndsAt: null, basis: 'quota',
+      delayedBy: [{ reason: 'reply_priority', seconds: 600 }, { reason: 'new_chat_cap', seconds: 1800 }, { reason: 'timelock', seconds: 0 }]
     }, NOW, tz);
-    expect(l.delay).toBe("Pushed back by WhatsApp's timelock (2 h 05 min) and quiet hours (1 h 00 min)");
+    expect(l.delay).toBe("40 min later than planned: replies go first, and WhatsApp's new-chat limit resets at 09:00 tomorrow.");
+  });
+
+  it('CW-3.9 a single reason has no "and"', () => {
+    const l = etaLines({ ...none, finishAt: at(3600), goNow: 5, delayedBy: [{ reason: 'quiet_hours', seconds: 3900 }] }, NOW, tz);
+    expect(l.delay).toBe('1 h 05 min later than planned: quiet hours are on.');
   });
 });
 
