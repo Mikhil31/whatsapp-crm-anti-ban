@@ -92,7 +92,7 @@ function lastMessageOf(
   const from = direction === 'outbound' ? 'us' : 'them';
   if (kind !== 'text') {
     const label = kind === 'audio' || kind === 'voice' || kind === 'ptt' ? 'Voice note'
-      : kind === 'image' || kind === 'video' || kind === 'sticker' ? 'Photo' : 'Document';
+      : kind === 'image' || kind === 'sticker' ? 'Photo' : kind === 'video' ? 'Video' : 'Document';
     return { from, text: label, kind };
   }
   let text = '';

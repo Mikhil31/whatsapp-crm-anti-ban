@@ -125,9 +125,10 @@ describe('CW-2.7 the latest message in the chat', () => {
     const photo = await addRecipient('Pic', 'sent', { message: { direction: 'inbound', kind: 'image' } });
     const voice = await addRecipient('Voice', 'sent', { message: { direction: 'inbound', kind: 'audio' } });
     const doc = await addRecipient('Doc', 'sent', { message: { direction: 'inbound', kind: 'document' } });
+    const video = await addRecipient('Clip', 'sent', { message: { direction: 'inbound', kind: 'video' } });
     const rows = (await list()).body.data as Row[];
     const text = (id: string): string | undefined => rows.find((r) => r.id === id)?.lastMessage?.text;
-    expect([text(photo), text(voice), text(doc)]).toEqual(['Photo', 'Voice note', 'Document']);
+    expect([text(photo), text(voice), text(doc), text(video)]).toEqual(['Photo', 'Voice note', 'Document', 'Video']);
   });
 
   it('is null for someone with no chat yet', async () => {
