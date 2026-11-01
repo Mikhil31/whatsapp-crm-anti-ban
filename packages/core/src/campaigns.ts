@@ -2,7 +2,9 @@ import { resolveSendAsset } from './campaign-media.js';
 import { sql } from 'drizzle-orm';
 import type { Transaction } from '@crm/db';
 import type { KmsDriver } from '@crm/kms-local';
-import { planFirstMessage, renderRecipientBody } from './antiban/campaign-text.js';
+import { missingFillIns, planFirstMessage, renderRecipientBody } from './antiban/campaign-text.js';
+import { fillInKeys } from './body-variation.js';
+import { loadCustomFields } from './custom-fields.js';
 import { drawGapMs } from './antiban/gap.js';
 import { buildSegmentPredicate, type SegmentDefinition } from './segments.js';
 import type { TenantWork } from './ingestion.js';
@@ -40,10 +42,21 @@ export interface AudiencePreview {
   readonly reachable: number;
   /** The rest — no phone/`wa_*` identity, so they would be recorded as skipped, never dropped. */
   readonly unreachable: number;
-  /** Reachable people already sent a different campaign inside the cooldown window (they would be skipped). */
+  /**
+   * Reachable people sent a different campaign from this same number in the last 14 days, with nothing live: a warning only,
+   * they are sent (CW-6.6a AC3).
+   */
   readonly recentlyMessaged: number;
   /** The campaign that most of them were messaged by, or null when none. */
   readonly recentCampaign: string | null;
+  /** Reachable people still waiting in a live campaign on this same number: the red confirm names them (CW-6.6a AC1). */
+  readonly sameNumberLive: number;
+  /** The live campaign most of them are in, or null when none. */
+  readonly sameNumberLiveCampaign: string | null;
+  /** The phone number this campaign sends from, for the confirm's wording. */
+  readonly senderPhone: string | null;
+  /** Reachable people (not counted above) already in a campaign or messaged lately from a different number: a small note (CW-6.6a AC4). */
+  readonly otherNumberOverlap: number;
 }
 
 /**
@@ -75,14 +88,32 @@ export async function previewAudience(
                WHERE ci.contact_id = c.id AND ci.org_id = ${orgId}
                  AND ci.kind IN ('phone', 'wa_jid', 'wa_lid')
              ) AS reachable,
-             -- The latest other campaign that already messaged this person inside the cooldown window, if any.
+             -- The latest other campaign that already messaged this person from THIS number inside the cooldown window, if any.
              (SELECT cp2.name FROM message m
                 JOIN conversation v ON v.id = m.conversation_id
                 JOIN campaign cp2 ON cp2.id = m.campaign_id
-              WHERE v.org_id = ${orgId} AND v.contact_id = c.id
+              WHERE v.org_id = ${orgId} AND v.contact_id = c.id AND v.sender_identity_id = cp.sender_identity_id
                 AND m.direction = 'outbound' AND m.campaign_id <> cp.id AND m.status <> 'failed'
                 AND m.created_at > now() - make_interval(days => ${COOLDOWN_DAYS})
-              ORDER BY m.created_at DESC LIMIT 1) AS recent_campaign
+              ORDER BY m.created_at DESC LIMIT 1) AS recent_campaign,
+             -- A live campaign on this same number that still has this person waiting (CW-6.6a AC1).
+             (SELECT cp3.name FROM campaign_recipient cr3 JOIN campaign cp3 ON cp3.id = cr3.campaign_id
+              WHERE cr3.org_id = ${orgId} AND cr3.contact_id = c.id AND cr3.campaign_id <> cp.id
+                AND cr3.status IN ('pending', 'queued') AND cp3.status IN ('running', 'paused')
+                AND cp3.sender_identity_id = cp.sender_identity_id
+              ORDER BY cp3.created_at DESC LIMIT 1) AS live_campaign,
+             -- Messaged by a campaign, or waiting in a live one, from a DIFFERENT number (CW-6.6a AC4): only a note.
+             (EXISTS (
+                SELECT 1 FROM message m
+                  JOIN conversation v ON v.id = m.conversation_id
+                WHERE v.org_id = ${orgId} AND v.contact_id = c.id AND v.sender_identity_id <> cp.sender_identity_id
+                  AND m.direction = 'outbound' AND m.campaign_id IS NOT NULL AND m.campaign_id <> cp.id AND m.status <> 'failed'
+                  AND m.created_at > now() - make_interval(days => ${COOLDOWN_DAYS}))
+              OR EXISTS (
+                SELECT 1 FROM campaign_recipient cr4 JOIN campaign cp4 ON cp4.id = cr4.campaign_id
+                WHERE cr4.org_id = ${orgId} AND cr4.contact_id = c.id AND cr4.campaign_id <> cp.id
+                  AND cr4.status IN ('pending', 'queued') AND cp4.status IN ('running', 'paused')
+                  AND cp4.sender_identity_id <> cp.sender_identity_id)) AS other_number
       FROM campaign cp
       JOIN contact c ON c.org_id = cp.org_id
       WHERE cp.id = ${campaignId} AND cp.org_id = ${orgId}
@@ -104,12 +135,107 @@ export async function previewAudience(
     SELECT count(*)::int AS total,
            count(*) FILTER (WHERE reachable)::int AS reachable,
            count(*) FILTER (WHERE NOT reachable)::int AS unreachable,
-           count(*) FILTER (WHERE reachable AND recent_campaign IS NOT NULL)::int AS "recentlyMessaged",
-           (SELECT recent_campaign FROM audience WHERE reachable AND recent_campaign IS NOT NULL
-            GROUP BY recent_campaign ORDER BY count(*) DESC LIMIT 1) AS "recentCampaign"
+           -- Messaged from this number lately with nothing live: a warning line, they are sent (CW-6.6a AC3).
+           count(*) FILTER (WHERE reachable AND recent_campaign IS NOT NULL AND live_campaign IS NULL)::int AS "recentlyMessaged",
+           (SELECT recent_campaign FROM audience WHERE reachable AND recent_campaign IS NOT NULL AND live_campaign IS NULL
+            GROUP BY recent_campaign ORDER BY count(*) DESC LIMIT 1) AS "recentCampaign",
+           count(*) FILTER (WHERE reachable AND live_campaign IS NOT NULL)::int AS "sameNumberLive",
+           (SELECT live_campaign FROM audience WHERE reachable AND live_campaign IS NOT NULL
+            GROUP BY live_campaign ORDER BY count(*) DESC LIMIT 1) AS "sameNumberLiveCampaign",
+           (SELECT si.phone_e164 FROM campaign cp5 JOIN sender_identity si ON si.id = cp5.sender_identity_id
+            WHERE cp5.id = ${campaignId} AND cp5.org_id = ${orgId}) AS "senderPhone",
+           count(*) FILTER (WHERE reachable AND other_number AND recent_campaign IS NULL AND live_campaign IS NULL)::int AS "otherNumberOverlap"
     FROM audience`);
   const row = (rows as unknown as AudiencePreview[])[0];
-  return row ?? { total: 0, reachable: 0, unreachable: 0, recentlyMessaged: 0, recentCampaign: null };
+  return row ?? {
+    total: 0, reachable: 0, unreachable: 0, recentlyMessaged: 0, recentCampaign: null,
+    sameNumberLive: 0, sameNumberLiveCampaign: null, senderPhone: null, otherNumberOverlap: 0
+  };
+}
+
+/** One fill-in a message can use, for the Insert list (CW-7.6). */
+export interface FillInReportField {
+  readonly key: string;
+  /** What a person sees next to it; the built-ins are "Name" and "First name". */
+  readonly label: string;
+  /** A real value from one person in the audience, or null when nobody has one. */
+  readonly sample: string | null;
+  /** How many people in the audience have a value. */
+  readonly have: number;
+}
+
+/** The fill-ins for an audience, each with a sample value and how many of the people have it. */
+export interface FillInReport {
+  /** Everyone the audience matches right now (not only the reachable ones: a fill-in is read for each person). */
+  readonly total: number;
+  readonly fields: readonly FillInReportField[];
+}
+
+/** An audience stated one way, like a campaign's: the report works on a draft's choice before the draft exists. */
+export interface FillInAudience {
+  readonly fromImportRunId?: string | undefined;
+  readonly fromTagId?: string | undefined;
+  readonly fromSegmentId?: string | undefined;
+  readonly explicitContactIds?: readonly string[] | undefined;
+}
+
+/** "2026-11-12" read as a date shows as "12 Nov 2026"; anything else is shown as it was stored. */
+function sampleText(type: string, value: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (type !== 'date' || m === null) return value;
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${String(Number(m[3]))} ${months[Number(m[2]) - 1] ?? m[2]!} ${m[1]!}`;
+}
+
+/**
+ * The fill-ins an audience offers (CW-7.6): `name`, `first_name`, and every field the org defines, each with a real sample value and
+ * how many of the people have it. Reads the same people a campaign would freeze, without writing anything.
+ */
+export async function fillInReport(
+  tx: Transaction, orgId: string, audience: FillInAudience
+): Promise<FillInReport> {
+  let who = sql`false`;
+  if (audience.fromImportRunId !== undefined) {
+    who = sql`EXISTS (SELECT 1 FROM import_row ir
+      WHERE ir.import_run_id = ${audience.fromImportRunId} AND ir.contact_id = c.id AND ir.outcome IN ('created', 'updated'))`;
+  } else if (audience.fromTagId !== undefined) {
+    who = sql`EXISTS (SELECT 1 FROM contact_tag ct WHERE ct.tag_id = ${audience.fromTagId} AND ct.contact_id = c.id AND ct.org_id = ${orgId})`;
+  } else if (audience.fromSegmentId !== undefined) {
+    const def = (await tx.execute(sql`
+      SELECT definition FROM segment WHERE id = ${audience.fromSegmentId} AND org_id = ${orgId}`
+    ) as unknown as Array<{ definition: SegmentDefinition }>)[0]?.definition;
+    if (def !== undefined) who = buildSegmentPredicate(def, orgId);
+  } else if (audience.explicitContactIds !== undefined) {
+    who = sql`${JSON.stringify(audience.explicitContactIds)}::jsonb @> to_jsonb(c.id::text)`;
+  }
+
+  const fields = await loadCustomFields(tx, orgId);
+  const out: FillInReportField[] = [];
+
+  // Name, then the first word of it: both come from the display name.
+  const nameRow = (await tx.execute(sql`
+    SELECT count(*)::int AS total,
+           count(*) FILTER (WHERE nullif(trim(c.display_name), '') IS NOT NULL)::int AS have,
+           (array_agg(trim(c.display_name) ORDER BY c.id) FILTER (WHERE nullif(trim(c.display_name), '') IS NOT NULL))[1] AS sample
+    FROM contact c WHERE c.org_id = ${orgId} AND (${who})`
+  ) as unknown as Array<{ total: number; have: number; sample: string | null }>)[0];
+  const total = nameRow?.total ?? 0;
+  out.push({ key: 'name', label: 'Name', sample: nameRow?.sample ?? null, have: nameRow?.have ?? 0 });
+  out.push({
+    key: 'first_name', label: 'First name', have: nameRow?.have ?? 0,
+    sample: nameRow?.sample?.split(/\s+/)[0] ?? null
+  });
+
+  for (const f of fields) {
+    const r = (await tx.execute(sql`
+      SELECT count(*) FILTER (WHERE nullif(trim(c.custom_fields ->> ${f.key}), '') IS NOT NULL)::int AS have,
+             (array_agg(c.custom_fields ->> ${f.key} ORDER BY c.id)
+               FILTER (WHERE nullif(trim(c.custom_fields ->> ${f.key}), '') IS NOT NULL))[1] AS sample
+      FROM contact c WHERE c.org_id = ${orgId} AND (${who})`
+    ) as unknown as Array<{ have: number; sample: string | null }>)[0];
+    out.push({ key: f.key, label: f.label, have: r?.have ?? 0, sample: r?.sample === null || r?.sample === undefined ? null : sampleText(f.type, r.sample) });
+  }
+  return { total, fields: out };
 }
 
 /** Counts every recipient of a campaign by status. */
@@ -225,9 +351,14 @@ export async function dispatchCampaign(
   return tenant(async (tx) => {
     // A campaign with a picture or GIF sends it to everyone, the message being its caption; a GIF goes as its converted looping clip.
     const settings = (await tx.execute(sql`
-      SELECT media_asset_id AS "pictureId", media_after_reply AS "mediaAfterReply"
+      SELECT media_asset_id AS "pictureId", media_after_reply AS "mediaAfterReply",
+             blank_fill_in_choice AS "blankChoice", fill_in_fallback AS "fallback"
       FROM campaign WHERE id = ${input.campaignId} AND org_id = ${input.orgId}`
-    ) as unknown as Array<{ pictureId: string | null; mediaAfterReply: boolean }>)[0];
+    ) as unknown as Array<{ pictureId: string | null; mediaAfterReply: boolean; blankChoice: string | null; fallback: string | null }>)[0];
+    // What to do when a fill-in has no value for a person (CW-7.7): skip them, fill the gap with the fallback, or (null) leave it blank.
+    const blankChoice = settings?.blankChoice ?? null;
+    const fallback = blankChoice === 'fallback' ? settings?.fallback ?? null : null;
+    const knownFillIns = blankChoice === 'skip' ? fillInKeys((await loadCustomFields(tx, input.orgId)).map((f) => f.key)) : [];
     const withPicture = settings?.pictureId ?? null;
     const mediaAfterReply = settings?.mediaAfterReply ?? true;
     const asset = withPicture === null ? null : await resolveSendAsset(tx, input.orgId, withPicture);
@@ -263,11 +394,24 @@ export async function dispatchCampaign(
       // Recipient-experience gates: skip with a reported reason unless an admin lifted them.
       const blocked = await blockingPolicyGate(tx, {
         orgId: input.orgId, campaignId: input.campaignId, contactId: recipient.contactId,
-        overrides: input.gateOverrides ?? []
+        senderIdentityId: input.senderIdentityId, overrides: input.gateOverrides ?? []
       });
       if (blocked !== null) {
         await tx.execute(sql`
           UPDATE campaign_recipient SET status = 'skipped', skip_reason = ${POLICY_SKIP_REASON[blocked]}
+          WHERE id = ${recipient.id} AND org_id = ${input.orgId}`);
+        continue;
+      }
+
+      // "Skip them" for a blank fill-in (CW-7.7): someone with no value for a field the message uses is left out, with the reason
+      // shown. Only a real column counts; a mistyped key is blank for everyone and is dealt with before launch. The AI's own opening
+      // for a person does not use the campaign wording, so it is not checked.
+      if (blankChoice === 'skip' && recipient.openingEnc === null && missingFillIns(input.body, {
+        campaignId: input.campaignId, contactId: recipient.contactId,
+        displayName: recipient.contactName, customFields: recipient.customFields
+      }, knownFillIns).length > 0) {
+        await tx.execute(sql`
+          UPDATE campaign_recipient SET status = 'skipped', skip_reason = 'missing_field'
           WHERE id = ${recipient.id} AND org_id = ${input.orgId}`);
         continue;
       }
@@ -280,7 +424,7 @@ export async function dispatchCampaign(
         ? new TextDecoder().decode(kms.decrypt(recipient.openingEnc))
         : renderRecipientBody(input.body, {
           campaignId: input.campaignId, contactId: recipient.contactId,
-          displayName: recipient.contactName, customFields: recipient.customFields
+          displayName: recipient.contactName, customFields: recipient.customFields, fallback
         });
       // A new chat gets the text alone when the campaign has a picture or a link; they get the rest if they reply (F6 AC-7.3).
       const plan = planFirstMessage({

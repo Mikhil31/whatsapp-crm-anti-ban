@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { sql } from 'drizzle-orm';
 import {
-  campaignProgress, previewAudience, POLICY_GATES, campaignEta, hasVariation,
+  campaignProgress, previewAudience, POLICY_GATES, campaignEta, hasVariation, fillInReport, fillInKeys, unknownFillIns, loadCustomFields,
   createCampaignDraft, startCampaign as startCampaignRun, setCampaignStatus, editCampaign, type ActionContext,
   storeCampaignPicture, listCampaignPictures, CampaignPictureError, GifConversionError
 } from '@crm/core';
@@ -26,7 +26,12 @@ const createCampaign = z.object({
   /** A new chat gets the text alone; the picture or link follows when they reply. On unless said otherwise (F6 AC-7.3). */
   mediaAfterReply: z.boolean().optional(),
   /** Why these people are being messaged, in a sentence. Said in the closing message if one of them opts out (F6 AC-6.2). */
-  purpose: z.string().trim().min(1).max(300).optional()
+  purpose: z.string().trim().min(1).max(300).optional(),
+  /** A person with no value for a fill-in the message uses: leave them out, or fill the gap with `fillInFallback`. Unset = send anyway. */
+  blankFillInChoice: z.enum(['skip', 'fallback']).nullable().optional(),
+  fillInFallback: z.string().trim().min(1).max(200).nullable().optional()
+}).refine((v) => v.blankFillInChoice !== 'fallback' || (v.fillInFallback ?? '') !== '', {
+  message: 'give the fallback text to use', path: ['fillInFallback']
 }).refine((v) => [v.fromImportRunId, v.explicitContactIds, v.fromTagId, v.fromSegmentId]
   .filter((x) => x !== undefined).length === 1, {
   message: 'state the audience exactly once: fromImportRunId, explicitContactIds, fromTagId, or fromSegmentId'
@@ -38,6 +43,8 @@ const createCampaign = z.object({
  */
 const startCampaign = z.object({
   overrideGates: z.array(z.enum(POLICY_GATES)).max(POLICY_GATES.length).optional(),
+  /** Launching with a `{{key}}` that is not a column needs this explicit yes (CW-7.7 AC4). */
+  confirmUnknownFillIns: z.boolean().optional(),
   reason: z.string().trim().min(10).max(500).optional()
 }).refine((v) => (v.overrideGates ?? []).length === 0 || v.reason !== undefined, {
   message: 'a reason of at least 10 characters is required to override a gate', path: ['reason']
@@ -47,8 +54,23 @@ const startCampaign = z.object({
 const editBody = z.object({
   name: z.string().trim().min(1).max(200).optional(),
   body: z.string().min(1).max(4096).optional(),
-  mediaAfterReply: z.boolean().optional()
-}).refine((v) => v.name !== undefined || v.body !== undefined || v.mediaAfterReply !== undefined, 'give a name, a body or mediaAfterReply');
+  mediaAfterReply: z.boolean().optional(),
+  blankFillInChoice: z.enum(['skip', 'fallback']).nullable().optional(),
+  fillInFallback: z.string().trim().min(1).max(200).nullable().optional()
+}).refine((v) => v.name !== undefined || v.body !== undefined || v.mediaAfterReply !== undefined || v.blankFillInChoice !== undefined,
+  'give a name, a body, mediaAfterReply or blankFillInChoice')
+  .refine((v) => v.blankFillInChoice !== 'fallback' || (v.fillInFallback ?? '') !== '', {
+    message: 'give the fallback text to use', path: ['fillInFallback']
+  });
+
+/** The audience the fill-in report reads: stated once, like a campaign's. */
+const fillInsQuery = z.object({
+  fromImportRunId: z.string().uuid().optional(),
+  fromTagId: z.string().uuid().optional(),
+  fromSegmentId: z.string().uuid().optional()
+}).refine((v) => [v.fromImportRunId, v.fromTagId, v.fromSegmentId].filter((x) => x !== undefined).length === 1, {
+  message: 'state the audience exactly once: fromImportRunId, fromTagId, or fromSegmentId'
+});
 
 /**
  * Warnings about a campaign that never stop it from launching (F6 AC-7.2): text with no `{a|b}` variation and no AI writing it
@@ -121,6 +143,21 @@ export function campaignsRouter(storage: StorageDriver): Router {
     res.json({ data: await req.tenant!((tx) => listCampaignPictures(tx, orgId)) });
   });
 
+  /**
+   * The fill-ins an audience offers (CW-7.6): `name`, `first_name` and every defined field, each with a real sample value and how many
+   * of the people have it, so the Insert list can say "due_date · 12 Nov 2026 · 982 of 1,000 have it". Reads, writes nothing.
+   * (Declared before the `/:id` routes so "fill-ins" is not read as a campaign id.)
+   */
+  router.get('/fill-ins', requireScope('conversations:read'), async (req: Request, res: Response) => {
+    const parsed = fillInsQuery.safeParse(req.query);
+    if (!parsed.success) {
+      res.status(422).json(problem(req, 422, 'VALIDATION_FAILED', parsed.error.issues.map((i) => i.message).join('; ')));
+      return;
+    }
+    const orgId = req.crm!.orgId;
+    res.json({ data: await req.tenant!((tx) => fillInReport(tx, orgId, parsed.data)) });
+  });
+
   /** Creates a draft. Nothing is sent and no audience is frozen until it is started. */
   router.post('/', requireScope('messages:send'), async (req: Request, res: Response) => {
     const parsed = createCampaign.safeParse(req.body);
@@ -131,11 +168,13 @@ export function campaignsRouter(storage: StorageDriver): Router {
     }
     const orgId = req.crm!.orgId;
     const {
-      name, body, senderIdentityId, fromImportRunId, explicitContactIds, fromTagId, fromSegmentId, aiTemplateId, mediaAssetId, mediaAfterReply, purpose
+      name, body, senderIdentityId, fromImportRunId, explicitContactIds, fromTagId, fromSegmentId, aiTemplateId, mediaAssetId, mediaAfterReply, purpose,
+      blankFillInChoice, fillInFallback
     } = parsed.data;
 
     const created = await req.tenant!((tx) => createCampaignDraft(tx, orgId, actionContext(req), {
-      name, body, senderIdentityId, fromImportRunId, explicitContactIds, fromTagId, fromSegmentId, aiTemplateId, mediaAssetId, mediaAfterReply, purpose
+      name, body, senderIdentityId, fromImportRunId, explicitContactIds, fromTagId, fromSegmentId, aiTemplateId, mediaAssetId, mediaAfterReply, purpose,
+      blankFillInChoice, fillInFallback
     }));
 
     if ('error' in created) {
@@ -169,6 +208,21 @@ export function campaignsRouter(storage: StorageDriver): Router {
       if (overrideGates.length > 0 && (req.crm!.kind !== 'session' || req.crm!.role !== 'admin')) {
         res.status(403).json(problem(req, 403, 'FORBIDDEN', 'Only an admin can override a gate.'));
         return;
+      }
+
+      // A `{{key}}` that is not a column is blank for everyone: starting needs an explicit yes (CW-7.7 AC4). Only a draft is checked;
+      // a campaign being resumed was already started with that yes.
+      if (startBody.data.confirmUnknownFillIns !== true) {
+        const unknown = await req.tenant!(async (tx) => {
+          const row = (await tx.execute(sql`SELECT body, status FROM campaign WHERE id = ${id} AND org_id = ${orgId}`) as unknown as Array<{ body: string; status: string }>)[0];
+          if (row === undefined || row.status !== 'draft') return [];
+          return unknownFillIns(row.body, fillInKeys((await loadCustomFields(tx, orgId)).map((f) => f.key)));
+        });
+        if (unknown.length > 0) {
+          res.status(409).json(problem(req, 409, 'UNKNOWN_FILL_IN',
+            `No column called ${unknown.map((u) => u.key).join(', ')}. Fix the message, or confirm to send with blanks.`));
+          return;
+        }
       }
 
       const result = await req.tenant!((tx) => startCampaignRun(
@@ -291,13 +345,15 @@ export function campaignsRouter(storage: StorageDriver): Router {
 
       const data = await req.tenant!(async (tx) => {
         const rows = await tx.execute(sql`
-          SELECT c.status FROM campaign c
+          SELECT c.status, c.body FROM campaign c
           WHERE c.id = ${id} AND c.org_id = ${orgId}`);
-        const campaign = (rows as unknown as Array<{ status: string }>)[0];
+        const campaign = (rows as unknown as Array<{ status: string; body: string }>)[0];
         if (!campaign) return null;
 
         const audience = await previewAudience(tx, orgId, id);
-        return { status: campaign.status, audience };
+        // `{{keys}}` in the message that are not a column, each with the closest real one (CW-7.7): launching with one needs a yes.
+        const unknownFields = unknownFillIns(campaign.body, fillInKeys((await loadCustomFields(tx, orgId)).map((f) => f.key)));
+        return { status: campaign.status, audience, unknownFillIns: unknownFields };
       });
 
       if (data === null) {

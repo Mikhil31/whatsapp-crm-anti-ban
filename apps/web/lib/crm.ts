@@ -292,12 +292,29 @@ export interface CampaignPreview {
     reachable: number;
     /** The rest: no number, so they would be recorded as skipped, never dropped. */
     unreachable: number;
-    /** Reachable people another campaign messaged in the last 14 days (they would be skipped). */
+    /** Reachable people another campaign messaged from this same number in the last 14 days, nothing live (a warning; they are sent). */
     recentlyMessaged?: number;
     /** The campaign that most of them were messaged by. */
     recentCampaign?: string | null;
+    /** Reachable people still waiting in a live campaign on this same number (the red confirm). */
+    sameNumberLive?: number;
+    /** The live campaign most of them are in. */
+    sameNumberLiveCampaign?: string | null;
+    /** The phone number this campaign sends from. */
+    senderPhone?: string | null;
+    /** People already in a campaign or messaged lately from a different number (a small note). */
+    otherNumberOverlap?: number;
   };
+  /** `{{keys}}` in the message that are not a column, with the closest real one. */
+  unknownFillIns?: Array<{ key: string; suggestion: string | null }>;
 }
+
+/** One fill-in for the Insert list. Mirrors `GET /api/v1/campaigns/fill-ins`. */
+export interface FillInField { key: string; label: string; sample: string | null; have: number }
+export interface FillInReport { total: number; fields: FillInField[] }
+
+/** What to do for a person with no value for a fill-in the message uses. Unset = send anyway. */
+export type BlankFillInChoice = 'skip' | 'fallback';
 
 /** One recipient's outcome. Mirrors a row of `GET /api/v1/campaigns/:id/recipients`. */
 export interface CampaignRecipient {
@@ -1361,6 +1378,9 @@ export async function createCampaign(
     purpose?: string;
     /** A picture or link goes after the first reply to a new chat (on by default). */
     mediaAfterReply?: boolean;
+    /** What to do for people with a blank fill-in (CW-7.7), and the text for `fallback`. */
+    blankFillInChoice?: BlankFillInChoice;
+    fillInFallback?: string;
   } & CampaignTarget
 ): Promise<{ id: string; status: string }> {
   return request<{ id: string; status: string }>('/campaigns', {
@@ -1373,11 +1393,17 @@ export async function createCampaign(
  * begin. Resuming a paused campaign does not re-snapshot.
  */
 export async function startCampaign(
-  id: string, override?: { overrideGates: string[]; reason: string }
+  id: string, override?: { overrideGates?: string[]; reason?: string; confirmUnknownFillIns?: boolean }
 ): Promise<{ status: string }> {
   return request<{ status: string }>(`/campaigns/${encodeURIComponent(id)}/start`, {
     method: 'POST', ...(override ? { body: JSON.stringify(override) } : {})
   });
+}
+
+/** The fill-ins an audience offers, each with a sample and how many people have it (CW-7.6). */
+export async function getFillIns(audience: { fromTagId?: string; fromImportRunId?: string; fromSegmentId?: string }): Promise<FillInReport> {
+  const q = new URLSearchParams(Object.entries(audience).filter(([, v]) => v !== undefined && v !== '') as Array<[string, string]>);
+  return request<FillInReport>(`/campaigns/fill-ins?${q.toString()}`);
 }
 
 /** Pauses a running campaign. Instant — pending recipients are simply not dispatched. */
