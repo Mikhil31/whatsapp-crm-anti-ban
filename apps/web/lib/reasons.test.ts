@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeReason, clockTime } from './reasons';
+import { describeReason, clockTime, reasonLabel } from './reasons';
 
 const UNTIL = new Date('2026-10-31T14:20:00Z');
 const tz = { timeZone: 'UTC' };
@@ -22,7 +22,7 @@ describe('reason codes (F6 S10)', () => {
       const r = describeReason(code);
       expect(r.sentence).toBe('WhatsApp refused messages to this contact.');
       expect(r.action).toBe('retry');
-      expect(r.actionLabel).toBe('Retry');
+      expect(r.actionLabel).toBe('Try again');
     }
   });
 
@@ -30,7 +30,7 @@ describe('reason codes (F6 S10)', () => {
     const r = describeReason('unlinked');
     expect(r.sentence).toBe('The number was unlinked from the phone.');
     expect(r.action).toBe('relink');
-    expect(r.actionLabel).toBe('Relink');
+    expect(r.actionLabel).toBe('Link the number again');
   });
 
   it('AC-10.1 many_undelivered gives Resume', () => {
@@ -52,7 +52,7 @@ describe('reason codes (F6 S10)', () => {
     const r = describeReason('likely_blocked');
     expect(r.sentence).toBe('This contact has probably blocked the number.');
     expect(r.action).toBe('send_by_hand');
-    expect(r.actionLabel).toBe('Send by hand');
+    expect(r.actionLabel).toBe('Open chat');
   });
 
   it('AC-10.1 dnc and do_not_contact both give Lift', () => {
@@ -60,7 +60,7 @@ describe('reason codes (F6 S10)', () => {
       const r = describeReason(code);
       expect(r.sentence).toBe('This contact asked not to be messaged.');
       expect(r.action).toBe('lift');
-      expect(r.actionLabel).toBe('Lift');
+      expect(r.actionLabel).toBe('Allow messages again');
     }
   });
 
@@ -118,5 +118,19 @@ describe('reason codes (F6 S10)', () => {
   it('clockTime gives HH:MM in the zone asked for', () => {
     expect(clockTime(UNTIL, 'UTC')).toBe('14:20');
     expect(clockTime('2026-10-31T09:05:00Z', 'Asia/Kolkata')).toBe('14:35');
+  });
+});
+
+describe('CW-8.3 and CW-2.4 plain wording', () => {
+  it('CW-8.3 Resume keeps its name until the engine stops pausing numbers', () => {
+    expect(describeReason('many_undelivered').actionLabel).toBe('Resume');
+  });
+
+  it('CW-2.4 reasons read as words, never as codes', () => {
+    expect(reasonLabel('refused_463')).toBe('WhatsApp refused');
+    expect(reasonLabel('whatsapp_refused_463')).toBe('WhatsApp refused');
+    expect(reasonLabel('quiet_hours')).toBe('Quiet hours');
+    expect(reasonLabel('something_new_999')).toBe('Other reason');
+    expect(reasonLabel(null)).toBe('Other reason');
   });
 });
