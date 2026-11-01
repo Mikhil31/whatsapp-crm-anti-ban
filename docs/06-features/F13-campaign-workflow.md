@@ -387,8 +387,9 @@ Every row of the **G-table** behaves as written. Opted out stays the one hard st
 #### CW-8.2 Friendly errors · Wave 2 · ⬜
 - **AC1** "We couldn't load this. Check your connection and try again." with Try again and Copy error details. No raw codes, no "npm run dev". (`error.tsx` per route.)
 
-#### CW-8.3 Buttons say what they do · Wave 1 (reason buttons) · ⬜
-- **AC1** Retry → Try again · Relink → Link the number again · Resume → Stop sending · Lift → Allow messages again · Send by hand → Open chat.
+#### CW-8.3 Buttons say what they do · Wave 1 (all but Resume) · ⬜
+- **AC1** Retry → Try again · Relink → Link the number again · Lift → Allow messages again · Send by hand → Open chat.
+- **AC2** Resume → Stop sending, but only together with CW-3.3 (wave 2): until the engine stops pausing numbers, the button still resumes, so it keeps its name.
 
 #### CW-8.4 Warmer, shorter wording · Wave 2 · ⬜
 - **AC1** "We couldn't send this. Try again in a minute." · "This message is on hold. Copy the details if you need help."
