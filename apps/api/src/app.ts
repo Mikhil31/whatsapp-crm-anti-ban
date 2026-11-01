@@ -203,7 +203,7 @@ export function buildApp(deps: AppDependencies): Express & { aiRunner: AiJobRunn
   api.use('/custom-fields', customFieldsRouter());
   api.use('/encryption', encryptionRouter({ kms: deps.kms }));
   api.use('/segments', segmentsRouter());
-  api.use('/campaigns', campaignsRouter(deps.storage));
+  api.use('/campaigns', campaignsRouter(deps.storage, deps.kms));
   api.use('/', messagesRouter(deps.kms, deps.config.DEFAULT_COUNTRY, deps.storage, ATTACHMENT_LIMIT_BYTES));
   app.use('/api/v1', api);
 

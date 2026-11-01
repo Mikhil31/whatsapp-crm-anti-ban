@@ -250,6 +250,9 @@ export interface CampaignProgress {
   pending: number;
   queued: number;
   sent: number;
+  /** Of those sent, how many are at the delivered tick or beyond (read included), and how many were read. */
+  delivered: number;
+  read: number;
   failed: number;
   skipped: number;
 }
@@ -325,6 +328,11 @@ export interface CampaignRecipient {
   contactId?: string;
   conversationId?: string | null;
   senderIdentityId?: string | null;
+  sentAt?: string | null;
+  deliveredAt?: string | null;
+  readAt?: string | null;
+  /** The latest message in this person's chat, as one short line (CW-2.7), or null when there is none yet. */
+  lastMessage?: { from: 'us' | 'them'; text: string; kind: string } | null;
 }
 
 /** A page of a campaign's recipients, with the reasons the whole campaign has (first page only). */
@@ -1283,10 +1291,11 @@ export async function previewCampaign(id: string): Promise<CampaignPreview> {
  * and `q` searches the contact's name or number. `cursor` is the `nextCursor` of the page before.
  */
 export async function listCampaignRecipients(
-  id: string, opts: { status?: string; reason?: string; q?: string; cursor?: string; limit?: number } = {}
+  id: string, opts: { status?: string; show?: string; reason?: string; q?: string; cursor?: string; limit?: number } = {}
 ): Promise<RecipientPage> {
   const params = new URLSearchParams();
   if (opts.status !== undefined && opts.status !== '') params.set('status', opts.status);
+  if (opts.show !== undefined && opts.show !== '') params.set('show', opts.show);
   if (opts.reason !== undefined && opts.reason !== '') params.set('reason', opts.reason);
   if (opts.q !== undefined && opts.q.trim() !== '') params.set('q', opts.q.trim());
   if (opts.cursor !== undefined && opts.cursor !== '') params.set('cursor', opts.cursor);
