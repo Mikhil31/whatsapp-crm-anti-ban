@@ -103,7 +103,7 @@ test.describe('anti-ban visibility (F6 S10)', () => {
     // The reason in words, not a code, and the action for it.
     await expect(timeline.getByTestId('reason-sentence')).toHaveText('The number is not connected right now.');
     await expect(timeline.getByTestId('reason-sentence')).toHaveAttribute('data-code', 'sender_not_connected');
-    const relink = timeline.getByRole('link', { name: 'Relink' });
+    const relink = timeline.getByRole('link', { name: 'Link the number again' });
     await expect(relink).toHaveAttribute('href', new RegExp(`^/link\\?start=${s.senderId}$`));
   });
 
@@ -120,7 +120,7 @@ test.describe('anti-ban visibility (F6 S10)', () => {
     await expect(page.getByTestId('message-timeline').first()).toHaveAttribute('data-outcome', 'held');
   });
 
-  test('AC-10.2 the campaign page lists every recipient in a table, with state, reason, action and gap, instead of count boxes', async ({ page }) => {
+  test('AC-10.2 the campaign page lists every recipient in a table, with where they are, why and what to do, instead of count boxes', async ({ page }) => {
     await signIn(page);
     const s = await ensureSeed(page);
     await page.goto(`/broadcast/${s.campaignId}`);
@@ -129,20 +129,21 @@ test.describe('anti-ban visibility (F6 S10)', () => {
     await expect(page.getByRole('list', { name: 'Counts' })).toBeVisible();
     const table = page.getByTestId('recipient-table');
     await expect(table).toBeVisible();
-    await expect(table.getByRole('columnheader')).toHaveText(['Contact', 'State', 'Reason', 'Action', 'Gap']);
+    await expect(table.getByRole('columnheader')).toHaveText(['Contact', 'Where they are', 'Why', 'What you can do']);
     const rows = table.getByTestId('recipient-row');
     await expect(rows).toHaveCount(2);
 
     const held = rows.filter({ hasText: HELD_NAME });
     await expect(held.getByTestId('reason-sentence')).toHaveText('The number is not connected right now.');
-    await expect(held.getByRole('link', { name: 'Relink' })).toBeVisible();
-    // The gap drawn for this recipient when the campaign launched.
-    await expect(held).toContainText(/\d+ s/);
+    await expect(held.getByRole('link', { name: 'Link the number again' })).toBeVisible();
+    // A held person is Waiting, and says why in words.
+    await expect(held).toContainText('Waiting');
+    await expect(held).toContainText('Number not connected');
 
     const optout = rows.filter({ hasText: OPTOUT_NAME });
     await expect(optout).toHaveAttribute('data-status', 'skipped');
     await expect(optout.getByTestId('reason-sentence')).toHaveText('This contact asked not to be messaged.');
-    await expect(optout.getByRole('button', { name: 'Lift' })).toBeVisible();
+    await expect(optout.getByRole('button', { name: 'Allow messages again' })).toBeVisible();
   });
 
   test('AC-10.2 the table filters by state and by reason', async ({ page }) => {
@@ -151,18 +152,22 @@ test.describe('anti-ban visibility (F6 S10)', () => {
     await page.goto(`/broadcast/${s.campaignId}`);
     const rows = page.getByTestId('recipient-row');
 
-    // By state.
-    await page.getByRole('link', { name: 'skipped', exact: true }).first().click();
-    await expect(page).toHaveURL(/status=skipped/);
+    // By state: the Show menu, in plain words.
+    await page.getByLabel('Show').selectOption('not_yet');
+    await page.getByRole('button', { name: 'Apply' }).click();
+    await expect(page).toHaveURL(/show=not_yet/);
     await expect(rows).toHaveCount(1);
     await expect(rows.first()).toContainText(OPTOUT_NAME);
 
     // By reason: the filter lists the reasons this campaign has, with counts.
     await page.goto(`/broadcast/${s.campaignId}`);
-    const filters = page.getByTestId('reason-filters');
-    await expect(filters.locator('[data-reason="dnc"]')).toBeVisible();
-    await filters.locator('[data-reason="sender_not_connected"]').click();
-    await expect(page).toHaveURL(/reason=sender_not_connected/);
+    const show = page.getByLabel('Show');
+    await expect(show.locator('option', { hasText: 'Asked not to be messaged' })).toHaveCount(1);
+    await show.selectOption('reason:sender_not_connected');
+    await page.getByRole('button', { name: 'Apply' }).click();
+    await expect(page).toHaveURL(/show=reason%3Asender_not_connected/);
+    // Reasons are words with counts, never codes.
+    await expect(page.getByTestId('filter-bar')).not.toContainText(/[a-z]+_[a-z]+/);
     await expect(rows).toHaveCount(1);
     await expect(rows.first()).toContainText(HELD_NAME);
 
@@ -179,7 +184,7 @@ test.describe('anti-ban visibility (F6 S10)', () => {
     await page.goto(`/broadcast/${s.campaignId}`);
     const row = page.getByTestId('recipient-row').filter({ hasText: OPTOUT_NAME });
 
-    await row.getByRole('button', { name: 'Lift' }).click();
+    await row.getByRole('button', { name: 'Allow messages again' }).click();
     await expect(row.getByText('Allow messages to this contact again?')).toBeVisible();
     // Asked, not done: the contact is still flagged.
     const flagged = async (): Promise<boolean> => {
@@ -199,10 +204,10 @@ test.describe('anti-ban visibility (F6 S10)', () => {
     await page.goto(`/broadcast/${s.campaignId}`);
     const eta = page.getByTestId('campaign-eta');
     await expect(eta).toBeVisible();
-    // "Finishes at 17:42", or the split around WhatsApp's reset ("370 go now, finishing 15:10; 130 after WhatsApp's reset at 09:00
+    // "Done by about 17:42", or the split around WhatsApp's reset ("370 go now, finishing 15:10; 130 after WhatsApp's reset at 09:00
     // tomorrow"), or "Nothing left to send." once everything has gone. Never a bare code or an empty line.
     await expect(eta.getByTestId('eta-headline')).toHaveText(
-      /^(Finishes at \d{2}:\d{2}( tomorrow| on \d+ \w+)?|\d+ go now(, finishing [^;]+)?; \d+ after WhatsApp's reset at \d{2}:\d{2}.*|None go now; .*|Nothing left to send\.)$/
+      /^(Done by about \d{2}:\d{2}( tomorrow| on \d+ \w+)?|\d+ go now(, finishing [^;]+)?; \d+ after WhatsApp's reset at \d{2}:\d{2}.*|None go now; .*|Nothing left to send\.)\.?$/
     );
   });
 
@@ -217,8 +222,8 @@ test.describe('anti-ban visibility (F6 S10)', () => {
     await expect(lane.getByTestId('lane-holding')).toContainText('Holding: The number is not connected right now.');
     await expect(lane.getByTestId('lane-warning')).toContainText('No report from WhatsApp yet');
     await expect(lane.getByTestId('lane-linked-since')).toHaveText('not linked');
-    // The hold's action is the same Relink as on the message.
-    await expect(lane.getByRole('link', { name: 'Relink' })).toHaveAttribute('href', new RegExp(`/link\\?start=${s.senderId}`));
+    // The hold's action is the same "Link the number again" as on the message.
+    await expect(lane.getByRole('link', { name: 'Link the number again' })).toHaveAttribute('href', new RegExp(`/link\\?start=${s.senderId}`));
   });
 
   test('AC-10.5 the number card counts on its own and picks up new work without a reload', async ({ page }) => {
