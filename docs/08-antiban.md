@@ -101,6 +101,22 @@ Settings: `GET/PUT /antiban/settings` (admin). `missing` lists the contact detai
 New chats beyond the quota WhatsApp reported go after the cycle end (`goNow`, `afterReset`, `resetAt`, `basis`), and what moved the
 finish is named (`delayedBy`).
 
+## What the screens show (S10)
+
+Every reason code goes through one module, `apps/web/lib/reasons.ts`: code to sentence (with the clock time filled in from the hold's
+expected end) to action. An unknown code reads as a generic sentence with the raw code, never blank. The actions call real routes:
+Retry is `POST /messages/:id/retry` (only on a click, never automatic), Resume is `POST /senders/:id/resume`, Lift is
+`PUT /contacts/:id/do-not-contact`, Relink opens the link flow, Send by hand focuses the composer or opens the thread. "Send now" for
+quiet hours has no route behind it, so no button is shown.
+
+- **Message timeline** (inbox): queued, waiting n s, typing, sent, delivered, read; or the hold or failure with its sentence and action.
+- **Campaign page**: counts as a compact header, the ETA, and a paged recipient table filterable by state and reason.
+- **Number card** (`/link`): `lane` from `GET /senders` (waiting, next send, hold), the warning level with quota, linked since, hints.
+- **Sending rules** (`/sending`, admin): closing message, contact details, default purpose, quiet hours.
+
+Countdowns tick in the browser every second; the data behind them is re-read by the existing polling (inbox 5 s, running campaign
+3 s, Numbers page 5 s), so nothing needs a reload.
+
 ## What stays, because it protects people and not the number
 
 - **Do-not-contact**, checked when a message is created and again as the last line before it is sent. An admin can override it per message or per campaign, with a reason, audited; an agent can answer by hand a contact who wrote after being flagged; an agent or the contact (a restart word) can lift an opt-out.
