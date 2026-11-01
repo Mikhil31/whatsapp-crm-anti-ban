@@ -314,6 +314,7 @@ export interface CampaignPreview {
 
 /** One fill-in for the Insert list. Mirrors `GET /api/v1/campaigns/fill-ins`. */
 export interface FillInField { key: string; label: string; sample: string | null; have: number }
+/** Everyone in the chosen audience, and each fill-in they can use. */
 export interface FillInReport { total: number; fields: FillInField[] }
 
 /** What to do for a person with no value for a fill-in the message uses. Unset = send anyway. */

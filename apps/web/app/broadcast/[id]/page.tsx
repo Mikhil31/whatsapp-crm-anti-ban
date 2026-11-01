@@ -5,7 +5,7 @@ import {
 } from '@/lib/crm';
 import type { Me, CampaignDetail, CampaignPreview, CampaignEta, RecipientPage, CampaignRecipient, Sender } from '@/lib/crm';
 import { campaignStatusBadge } from '../campaign-status';
-import { CampaignControls, SendAnywayButton } from '../campaign-controls';
+import { CampaignControls } from '../campaign-controls';
 import { AutoRefresh } from '../auto-refresh';
 import { GATE_LABEL } from '../gates';
 import { estimateTimes, isShow, REASON_SHOW_PREFIX } from '@/lib/recipient-status';
@@ -125,17 +125,6 @@ export default async function CampaignPage(
           )}
 
           {campaign.status === 'running' && <AutoRefresh />}
-
-          {campaign.status === 'draft' && preview !== null && (preview.audience.recentlyMessaged ?? 0) > 0 && (
-            <div role="alert" className="mb-4 notice notice-warning flex flex-wrap items-center justify-between gap-3">
-              <p>
-                {preview.audience.recentlyMessaged} of {preview.audience.reachable} contacts were already messaged in another
-                campaign{(preview.audience.recentCampaign ?? null) !== null ? <>, “{preview.audience.recentCampaign}”</> : null}, in the
-                last 14 days. They will be skipped unless you send anyway.
-              </p>
-              {me?.role === 'admin' ? <SendAnywayButton /> : <span className="text-xs">Only an admin can send anyway.</span>}
-            </div>
-          )}
 
           {campaign.pauseReason === 'ban_suspected' && campaign.status === 'paused' && (
             <p role="alert" className="mb-4 notice notice-danger">

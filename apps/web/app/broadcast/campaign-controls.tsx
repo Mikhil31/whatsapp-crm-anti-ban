@@ -7,9 +7,6 @@ import {
 } from './gates';
 import type { CampaignPreview } from '@/lib/crm';
 
-/** The event the "Send anyway" button in the cooldown warning fires to open the overrides dialog. */
-export const OPEN_OVERRIDES = 'crm:open-overrides';
-
 /**
  * The start/pause/cancel controls. Pressing one disables all of them and shows what is happening ("Starting…"), so a second
  * click cannot do anything; the page re-reads itself when the server is done.
@@ -24,17 +21,6 @@ export function CampaignControls({ id, status, isAdmin }: { id: string; status: 
   const pendingExtra = useRef<FormData | null>(null);
   // What the draft would do before it starts: shown as the warning lines, and read again when Start is pressed.
   const [check, setCheck] = useState<CampaignPreview | null>(null);
-
-  // The cooldown warning's "Send anyway" opens the dialog with the cooldown box already ticked.
-  useEffect(() => {
-    const open = (): void => {
-      const box = dialog.current?.querySelector<HTMLInputElement>('input[value="cooldown"]');
-      if (box) box.checked = true;
-      dialog.current?.showModal();
-    };
-    window.addEventListener(OPEN_OVERRIDES, open);
-    return () => { window.removeEventListener(OPEN_OVERRIDES, open); };
-  }, []);
 
   // A draft says up front who it would overlap with (CW-6.6a AC3, AC4).
   useEffect(() => {
@@ -203,11 +189,3 @@ export function CampaignControls({ id, status, isAdmin }: { id: string; status: 
   );
 }
 
-/** Opens the overrides dialog from the cooldown warning (admins only). */
-export function SendAnywayButton() {
-  return (
-    <button type="button" className="btn btn-sm" onClick={() => { window.dispatchEvent(new Event(OPEN_OVERRIDES)); }}>
-      Send anyway…
-    </button>
-  );
-}

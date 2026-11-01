@@ -24,7 +24,8 @@ didn't get it (not sent) → 4 See who's interested (campaign + inbox). Sections
 | **Wait / time display** (2.5) | `apps/web/lib/visibility.ts` `formatWait` | every countdown: campaign page, number card, inbox timeline | `apps/web/lib/visibility.test.ts` | this file 2.5 |
 | **Recipient status words** (Waiting / Sending / Sent / Delivered / Read / Not yet) | `apps/web/lib/recipient-status.ts` (new, CW-2.2) | campaign list rows, count line, Show menu, live panel | `apps/web/lib/recipient-status.test.ts` | this file 2.2–2.4 |
 | **Policy gates** (14 days, other campaign, agent mid-chat, opted out) | `packages/core/src/policy-gates.ts` | `packages/core/src/campaigns.ts` (dispatch), `apps/api/src/routes/campaigns.ts` (preview), `apps/web/app/broadcast/gates.ts`, start flow on the campaign page | `tests/integration/policy-gates-per-sender.test.ts` | this file G-table, `F5-campaigns.md` |
-| **Fill-ins** `{{field}}` | `packages/core/src/body-variation.ts` (`VARIABLE`, `fillVariables`) | `packages/core/src/antiban/campaign-text.ts`, `apps/api/src/routes/campaigns.ts` (fill-in report), `apps/web/app/broadcast/new/*` (Insert menu, warnings), inbox composer (7.9), AI opening (7.9) | `packages/core/src/body-variation.test.ts`, `tests/integration/fill-ins.test.ts` | this file V-table |
+| **Fill-ins** `{{field}}` | `packages/core/src/body-variation.ts` (`VARIABLE`, `fillVariables`, `suggestFillIn`) | `packages/core/src/antiban/campaign-text.ts` (`recipientVars`, `missingFillIns`), `packages/core/src/campaigns.ts` (dispatch skip/fallback, `fillInReport`), `packages/core/src/campaign-followup.ts` (fallback in the follow-up), `apps/api/src/routes/campaigns.ts` (fill-in report, `UNKNOWN_FILL_IN`), `apps/web/app/broadcast/new/*` (Insert menu, chips, warnings; `fill-in-keys.ts` is a **copy** of `suggestFillIn` for typing speed: change both), inbox composer (7.9), AI opening (7.9) | `packages/core/src/body-variation.test.ts`, `tests/integration/fill-ins.test.ts` | this file V-table |
+| **Who is in an audience** (import run, tag, segment, picked people) | `audienceRule` in `packages/core/src/campaigns.ts` | campaign preview, the audience freeze at start, `fillInReport` | `tests/integration/campaigns.test.ts`, `fill-ins.test.ts`, `inline-audience.test.ts` | `F5-campaigns.md` |
 | **Reply labels** (Interested …) | `packages/core/src/reply-labels.ts` (new, CW-4.1) | opt-out classifier `packages/core/src/antiban/opt-out.ts`, campaign funnel, inbox filters, contact campaign list | `packages/core/src/reply-labels.test.ts` | this file L-table |
 | **Retry policy** (3.5) | `packages/core/src/antiban/constants.ts` (new `RETRY_*` constants) | `apps/gateway/src/lane.ts` `failSend`, reasons R-table rows "Send failed", "WhatsApp refused" | `tests/integration/auto-retry.test.ts` | this file 3.5, `08-antiban.md` |
 | **Colours / type** (9.1–9.3) | `apps/web/app/globals.css` `@theme` tokens | every `.btn-primary`, badge, notice; status dots | Playwright contrast check `tests/e2e/contrast.spec.ts` | this file 9.x |
@@ -108,7 +109,7 @@ As a client, I open the people from one file without tagging them.
 
 **Job:** see that it is working, who it is on, and when it will be done.
 
-#### CW-2.1 A live panel shows it's working · Wave 1 · ⬜
+#### CW-2.1 A live panel shows it's working · Wave 1 · ✅
 - **AC1** While running: a countdown ring to the next send, a pulsing "Sending" pill, "Next message to <name>", the finish as a clock time ("around 14:52 · 38 min left"), and a two-colour bar.
 - **AC2** Under it, one count line: Sent · Delivered · Read · Not yet. Clicking a count filters the list to those people.
 - **AC3** Paused: the panel says "Paused" and nothing moves. Finished: "Done" and nothing moves.
@@ -116,7 +117,7 @@ As a client, I open the people from one file without tagging them.
 - **Tests:** unit for the count line maths (`recipient-status.test.ts`); e2e: running campaign shows ring + pill; paused shows "Paused" and no animation class.
 - **Files:** `app/broadcast/[id]/page.tsx`, new `app/broadcast/[id]/live-panel.tsx`.
 
-#### CW-2.2 Everyone in the list from the moment you press Start · Wave 1 · ⬜
+#### CW-2.2 Everyone in the list from the moment you press Start · Wave 1 · ✅ (AC2 times only on the first, unfiltered page)
 - **AC1** Every recipient is listed in send order as soon as the campaign starts.
 - **AC2** Each row moves on its own: "Waiting · around 14:39" → highlighted "Sending in 12 s" with typing dots → Sent → Delivered → Read, each with its time.
 - **AC3** A held row says why, in words ("Quiet hours · goes 08:00").
@@ -124,18 +125,18 @@ As a client, I open the people from one file without tagging them.
 - **Tests:** unit `recipient-status.test.ts` (status + reason → row words); integration: recipients API returns send order.
 - **Files:** `app/broadcast/[id]/*`, new `apps/web/lib/recipient-status.ts`, `apps/api/src/routes/campaigns.ts` (order).
 
-#### CW-2.3 "Sent" means sent · Wave 1 · ⬜
+#### CW-2.3 "Sent" means sent · Wave 1 · ✅
 - **AC1** The headline is "212 of 500 reached · 17 not yet". Failed is never counted as reached.
 - **AC2** The bar shows reached and not-yet in two colours.
 - **Tests:** unit: 5 sent + 2 failed of 10 → "5 of 10 reached".
 
-#### CW-2.4 One filter bar, in plain words · Wave 1 · ⬜
+#### CW-2.4 One filter bar, in plain words · Wave 1 · ✅
 - **AC1** One search box plus one "Show" menu: Everyone, Waiting, Reached, Not yet.
 - **AC2** Reasons are words with counts ("WhatsApp refused 4"), never codes like `refused_463`.
 - **AC3** `queued` and `pending` both show as "Waiting".
 - **Tests:** unit (`queued`, `pending` → Waiting); e2e: no text matching `/_\d{3}|[a-z]+_[a-z]+/` in the filter bar.
 
-#### CW-2.5 Countdowns only for short waits · Wave 1 · ⬜
+#### CW-2.5 Countdowns only for short waits · Wave 1 · ✅
 - **AC1** Under a minute: seconds ("12 s"), ticking.
 - **AC2** 1 to 10 minutes: "in about 4 min".
 - **AC3** Longer: a clock time ("at 09:00", "at 09:00 tomorrow"), not ticking.
@@ -143,11 +144,11 @@ As a client, I open the people from one file without tagging them.
 - **Tests:** unit `visibility.test.ts`: 59 s, 61 s, 9 min 59 s, 10 min 1 s, next-day.
 - **Files:** `apps/web/lib/visibility.ts` (`formatWait`), all callers.
 
-#### CW-2.6 The paused banner has a button · Wave 1 · ⬜
+#### CW-2.6 The paused banner has a button · Wave 1 · ✅
 - **AC1** The paused banner has "Open the number" (link to the number) or, when the number is unlinked, "Link it again".
 - **Tests:** e2e: unlinked sender → banner button "Link it again" goes to the link page.
 
-#### CW-2.7 Each row shows the latest message, one line · Wave 1 · ⬜
+#### CW-2.7 Each row shows the latest message, one line · Wave 1 · ✅
 - **AC1** Under the name, the last message in the chat in grey, one line, cut with an ellipsis: "You: …" for ours, "<first name>: …" for theirs.
 - **AC2** It changes when a reply arrives (next refresh).
 - **AC3** No AI is used.
@@ -224,7 +225,7 @@ As a client, I open the people from one file without tagging them.
 - **Tests:** integration: a landline contact in an audience → recipient skipped `landline`.
 - **Files:** `packages/core/src/campaigns.ts` / audience snapshot, `reasons.ts`.
 
-#### CW-3.9 The finish time says why it takes this long · Wave 1 · ⬜
+#### CW-3.9 The finish time says why it takes this long · Wave 1 · ✅
 - **AC1** "Done by about 15:40. We send one message every 1 to 50 seconds, like a person would, so WhatsApp doesn't flag your number."
 - **AC2** If the finish moved: "40 min later than planned: replies go first, and WhatsApp's new-chat limit resets at 09:00." Built from the ETA's existing `delayedBy` list; no engine change.
 - **Tests:** unit: `delayedBy` [reply_priority 600 s, new_chat_cap 1800 s] → the sentence above with "40 min".
@@ -315,7 +316,7 @@ As a client, I open the people from one file without tagging them.
 #### CW-6.5 Check the auto-refresh doesn't break linking · Wave 2 · 🔒 needs a real phone
 - **AC1** Linked with a real phone (+919964122631 only) while the page refreshes. If the QR flickers or resets, only the live parts refresh.
 
-#### CW-6.6 We warn, we don't block · Wave 1 (per-number rule) / Wave 2 (the rest) · ⬜
+#### CW-6.6 We warn, we don't block · Wave 1 (per-number rule) / Wave 2 (the rest) · ✅ 6.6a · ⬜ 6.6b–d
 Every row of the **G-table** behaves as written. Opted out stays the one hard stop.
 - **CW-6.6a · Per sending number (Wave 1).** The 14-day and other-campaign checks look only at the **same sending number**.
   - **AC1** Same number with a live campaign (running or paused, person still pending/queued in it): before launch a red confirm names the people: "12 of these people are still in '<campaign>' from <sender phone>. Sending again from the same number will cut into that conversation, and their replies may be counted for the wrong campaign." Buttons "Leave them out" (default, focused) and "Send anyway".
@@ -352,7 +353,7 @@ Every row of the **G-table** behaves as written. Opted out stays the one hard st
 #### CW-7.5 "Saved" next to the button · Wave 2 · ⬜
 - **AC1** "Saved" beside the button for 3 seconds instead of a lasting green box.
 
-#### CW-7.6 Fill-ins you can see · Wave 1 · ⬜
+#### CW-7.6 Fill-ins you can see · Wave 1 · ✅
 - **AC1** An "Insert" button above the message box; typing "{" opens the same list.
 - **AC2** The list shows the chosen audience's columns (name, first_name, every field), each with a sample value and coverage: "due_date · 12 Nov 2026 · 982 of 1,000 have it".
 - **AC3** Picking one inserts it; in the box it shows as a chip, and the saved text stays `{{key}}`.
@@ -360,7 +361,7 @@ Every row of the **G-table** behaves as written. Opted out stays the one hard st
 - **Tests:** integration `fill-ins.test.ts`: report for an audience of 3 with one missing `due_date` → `due_date` coverage 2 of 3, sample value from a real person; e2e: type "{" → list → Enter → `{{due_date}}` in saved body.
 - **Files:** new `GET /campaigns/fill-ins?…audience` (or on preview) in `campaigns.ts`, `packages/core/src/body-variation.ts` (export key list helper), `broadcast/new/*`.
 
-#### CW-7.7 Blank fill-ins are caught before sending · Wave 1 · ⬜
+#### CW-7.7 Blank fill-ins are caught before sending · Wave 1 · ✅
 - **AC1** Under the box: "18 people have no due date." with three options: skip them / use a fallback (a text box, e.g. "soon") / send anyway.
 - **AC2** Skip → those people are skipped with reason `missing_field`. Fallback → the fallback text fills the gap. Send anyway → current behaviour.
 - **AC3** A `{{name}}` that isn't a column is underlined red with "No column called duedate. Did you mean due_date?" (closest key by edit distance ≤ 2).
@@ -387,7 +388,7 @@ Every row of the **G-table** behaves as written. Opted out stays the one hard st
 #### CW-8.2 Friendly errors · Wave 2 · ⬜
 - **AC1** "We couldn't load this. Check your connection and try again." with Try again and Copy error details. No raw codes, no "npm run dev". (`error.tsx` per route.)
 
-#### CW-8.3 Buttons say what they do · Wave 1 (all but Resume) · ⬜
+#### CW-8.3 Buttons say what they do · Wave 1 (all but Resume) · ✅ AC1 · ⬜ AC2
 - **AC1** Retry → Try again · Relink → Link the number again · Lift → Allow messages again · Send by hand → Open chat.
 - **AC2** Resume → Stop sending, but only together with CW-3.3 (wave 2): until the engine stops pausing numbers, the button still resumes, so it keeps its name.
 
@@ -408,7 +409,7 @@ From the page's IDs answer: "That audit is the useful follow-up, not hiding IDs.
 🔒 **Direction not chosen yet.** The page offers A (feels like WhatsApp), B (quiet workspace), C (mission control), with the
 suggested mix C + B + A. Build 9.1–9.7 (they hold for every direction); restyle screens only after the client picks.
 
-#### CW-9.1 A darker green · Wave 1 · ⬜
+#### CW-9.1 A darker green · Wave 1 · ✅ (contrast e2e not written yet)
 - **AC1** Buttons and links use #15803d (5.0:1 with white). Bright green only for dots, bars, the ring.
 - **Tests:** e2e contrast check on `.btn-primary` ≥ 4.5:1.
 
