@@ -21,3 +21,4 @@ slice, remainder tracked in `../21-deferred.md`) · **partial / seam only** as n
 | [F10](F10-analytics.md) | Analytics | partial |
 | [F11](F11-admin.md) | Admin & settings | ✅ |
 | [F12](F12-ai-agent.md) | AI agent | seam only |
+| [F13](F13-campaign-workflow.md) | Campaign workflow revamp (stories from the 2026-11-01 design review; impact map for every change) | ⬜ wave 1 in progress |
