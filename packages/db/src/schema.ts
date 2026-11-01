@@ -842,6 +842,13 @@ export const campaign = pgTable('campaign', {
   mediaAfterReply: boolean('media_after_reply').notNull().default(true),
   /** Why these people are being messaged, in a sentence. Said in the closing message if one of them opts out (F6 AC-6.2). Null = the org's default. */
   purpose: text('purpose'),
+  /**
+   * What to do for a person who has no value for a `{{fill-in}}` the message uses (CW-7.7): `skip` them (reason `missing_field`),
+   * or use `fill_in_fallback` in the gap. Null = send anyway, the gap stays blank.
+   */
+  blankFillInChoice: text('blank_fill_in_choice'),
+  /** The text that fills a blank fill-in when `blank_fill_in_choice` is `fallback`, e.g. "soon". */
+  fillInFallback: text('fill_in_fallback'),
   /** Why a campaign was paused by the system rather than a person (e.g. `ban_suspected`, `unlinked`). */
   pauseReason: text('pause_reason'),
 

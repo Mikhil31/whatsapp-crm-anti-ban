@@ -41,6 +41,20 @@ export interface NewCampaign extends CampaignAudience {
   readonly mediaAfterReply?: boolean | undefined;
   /** Why these people are being messaged, in a sentence; said in the closing message if one of them opts out (F6 AC-6.2). */
   readonly purpose?: string | null | undefined;
+  /** What to do for a person with no value for a fill-in the message uses (CW-7.7): `skip` them, or use `fillInFallback`. Unset = send anyway. */
+  readonly blankFillInChoice?: BlankFillInChoice | null | undefined;
+  /** The text that fills the gap when `blankFillInChoice` is `fallback`, e.g. "soon". */
+  readonly fillInFallback?: string | null | undefined;
+}
+
+/** The three answers to "18 people have no due date": skip them, fill the gap, or send anyway (stored as null). */
+export type BlankFillInChoice = 'skip' | 'fallback';
+
+/** What is stored for the 7.7 choice: the fallback only means something with the `fallback` choice; "send anyway" stores nothing. */
+function blankChoiceColumns(choice: BlankFillInChoice | null | undefined, fallback: string | null | undefined): [string | null, string | null] {
+  if (choice === 'skip') return ['skip', null];
+  if (choice === 'fallback' && fallback !== null && fallback !== undefined && fallback.trim() !== '') return ['fallback', fallback.trim()];
+  return [null, null];
 }
 
 /** Creates a draft. Nothing is sent and no audience is frozen until it is started. */
@@ -80,12 +94,15 @@ export async function createCampaignDraft(
   const existing = (twin as unknown as Array<{ id: string }>)[0];
   if (existing !== undefined) return { id: existing.id };
 
+  const [blankChoice, fallback] = blankChoiceColumns(input.blankFillInChoice, input.fillInFallback);
   const rows = await tx.execute(sql`
     INSERT INTO campaign (org_id, name, body, sender_identity_id, from_import_run_id,
-                          explicit_contact_ids, from_tag_id, from_segment_id, ai_template_id, media_asset_id, media_after_reply, purpose, status)
+                          explicit_contact_ids, from_tag_id, from_segment_id, ai_template_id, media_asset_id, media_after_reply, purpose,
+                          blank_fill_in_choice, fill_in_fallback, status)
     VALUES (${orgId}, ${input.name}, ${input.body}, ${input.senderIdentityId}, ${input.fromImportRunId ?? null},
             ${input.explicitContactIds === undefined ? null : JSON.stringify(input.explicitContactIds)}::jsonb,
-            ${input.fromTagId ?? null}, ${input.fromSegmentId ?? null}, ${input.aiTemplateId ?? null}, ${input.mediaAssetId ?? null}, ${input.mediaAfterReply ?? true}, ${input.purpose ?? null}, 'draft')
+            ${input.fromTagId ?? null}, ${input.fromSegmentId ?? null}, ${input.aiTemplateId ?? null}, ${input.mediaAssetId ?? null}, ${input.mediaAfterReply ?? true}, ${input.purpose ?? null},
+            ${blankChoice}, ${fallback}, 'draft')
     RETURNING id`);
   const id = (rows as unknown as Array<{ id: string }>)[0]!.id;
   await writeAudit(tx, {
@@ -182,7 +199,11 @@ export async function setCampaignStatus(
  * rewording it under the gateway would make one audience see two different messages, so pause it first.
  */
 export async function editCampaign(
-  tx: Transaction, orgId: string, ctx: ActionContext, id: string, change: { name?: string | undefined; body?: string | undefined; mediaAfterReply?: boolean | undefined }
+  tx: Transaction, orgId: string, ctx: ActionContext, id: string, change: {
+    name?: string | undefined; body?: string | undefined; mediaAfterReply?: boolean | undefined;
+    /** The 7.7 choice; `null` goes back to "send anyway". Left out = unchanged. */
+    blankFillInChoice?: BlankFillInChoice | null | undefined; fillInFallback?: string | null | undefined;
+  }
 ): Promise<'ok' | 'not_found' | 'not_editable'> {
   const found = (await tx.execute(sql`
     SELECT status, name, body FROM campaign WHERE id = ${id} AND org_id = ${orgId} FOR UPDATE`) as unknown as Array<{
@@ -196,6 +217,12 @@ export async function editCampaign(
     UPDATE campaign SET name = ${name}, body = ${body}, media_after_reply = coalesce(${change.mediaAfterReply ?? null}::boolean, media_after_reply),
                         updated_at = now()
     WHERE id = ${id} AND org_id = ${orgId}`);
+  if (change.blankFillInChoice !== undefined || change.fillInFallback !== undefined) {
+    const [choice, fallback] = blankChoiceColumns(change.blankFillInChoice, change.fillInFallback);
+    await tx.execute(sql`
+      UPDATE campaign SET blank_fill_in_choice = ${choice}, fill_in_fallback = ${fallback}
+      WHERE id = ${id} AND org_id = ${orgId}`);
+  }
   await writeAudit(tx, {
     orgId, actor: ctx.actor, action: AUDIT.campaignEdited, targetType: 'campaign', targetId: id,
     // The wording itself is not logged, only that it changed and how long it is now.
