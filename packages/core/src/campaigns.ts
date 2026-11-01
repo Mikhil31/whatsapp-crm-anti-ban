@@ -1,5 +1,5 @@
 import { resolveSendAsset } from './campaign-media.js';
-import { sql } from 'drizzle-orm';
+import { sql, type SQL } from 'drizzle-orm';
 import type { Transaction } from '@crm/db';
 import type { KmsDriver } from '@crm/kms-local';
 import { missingFillIns, planFirstMessage, renderRecipientBody } from './antiban/campaign-text.js';
@@ -32,6 +32,52 @@ export interface CampaignProgress {
   readonly sent: number;
   readonly failed: number;
   readonly skipped: number;
+}
+
+/**
+ * THE audience rule, written once: who is in an audience (a contact aliased `c`) given where each of its four ways of being chosen
+ * is read from (a campaign's columns, or bound values). The dry run, the freeze at start and the fill-in report all use it, so a
+ * change to who an audience contains changes all three. Exactly one way is set; with none set, nobody is in it ("never everyone").
+ */
+function audienceRule(
+  orgId: string,
+  cols: { importRun: SQL; explicit: SQL; tag: SQL; segment: SQL },
+  segmentPredicate: SQL | undefined
+): SQL {
+  return sql`(
+    -- Either everyone a named import run actually created or updated …
+    (${cols.importRun} IS NOT NULL AND EXISTS (
+      SELECT 1 FROM import_row ir
+      WHERE ir.import_run_id = ${cols.importRun} AND ir.contact_id = c.id AND ir.outcome IN ('created', 'updated')
+    ))
+    -- … or exactly the contacts that were listed …
+    OR (${cols.explicit} IS NOT NULL AND ${cols.explicit} @> to_jsonb(c.id::text))
+    -- … or everyone carrying a named tag, resolved at start so later tagging never changes a running campaign …
+    OR (${cols.tag} IS NOT NULL AND EXISTS (
+      SELECT 1 FROM contact_tag ct WHERE ct.tag_id = ${cols.tag} AND ct.contact_id = c.id AND ct.org_id = ${orgId}
+    ))
+    -- … or everyone a dynamic segment's filter matches.
+    ${segmentPredicate === undefined ? sql`` : sql`OR (${cols.segment} IS NOT NULL AND (${segmentPredicate}))`}
+  )`;
+}
+
+/** A dynamic segment resolves in TypeScript (its stored filter becomes a bound predicate); undefined when there is none. */
+async function segmentPredicateFor(tx: Transaction, orgId: string, segmentId: string | null): Promise<SQL | undefined> {
+  if (segmentId === null) return undefined;
+  const def = (await tx.execute(sql`
+    SELECT definition FROM segment WHERE id = ${segmentId} AND org_id = ${orgId}`
+  ) as unknown as Array<{ definition: SegmentDefinition }>)[0]?.definition;
+  return def === undefined ? undefined : buildSegmentPredicate(def, orgId);
+}
+
+/** The audience rule for a campaign row (`cp`), which is how the dry run and the freeze read it. */
+async function campaignAudienceWhere(tx: Transaction, orgId: string, campaignId: string): Promise<SQL> {
+  const seg = (await tx.execute(sql`
+    SELECT from_segment_id AS "id" FROM campaign WHERE id = ${campaignId} AND org_id = ${orgId}`
+  ) as unknown as Array<{ id: string | null }>)[0]?.id ?? null;
+  return audienceRule(orgId, {
+    importRun: sql`cp.from_import_run_id`, explicit: sql`cp.explicit_contact_ids`, tag: sql`cp.from_tag_id`, segment: sql`cp.from_segment_id`
+  }, await segmentPredicateFor(tx, orgId, seg));
 }
 
 /** The prospective audience of a draft, worked out without freezing it — a dry run's counts. */
@@ -70,15 +116,8 @@ export interface AudiencePreview {
 export async function previewAudience(
   tx: Transaction, orgId: string, campaignId: string
 ): Promise<AudiencePreview> {
-  // Same segment branch as snapshotAudience, so the dry-run count matches what start would freeze.
-  const segRows = await tx.execute(sql`
-    SELECT s.definition AS "definition"
-    FROM campaign cp JOIN segment s ON s.id = cp.from_segment_id
-    WHERE cp.id = ${campaignId} AND cp.org_id = ${orgId}`);
-  const segDef = (segRows as unknown as Array<{ definition: SegmentDefinition }>)[0]?.definition;
-  const segmentBranch = segDef === undefined
-    ? sql``
-    : sql`OR (cp.from_segment_id IS NOT NULL AND (${buildSegmentPredicate(segDef, orgId)}))`;
+  // The same rule snapshotAudience uses, so the dry-run count matches what start would freeze.
+  const who = await campaignAudienceWhere(tx, orgId, campaignId);
 
   const rows = await tx.execute(sql`
     WITH audience AS (
@@ -116,21 +155,7 @@ export async function previewAudience(
                   AND cp4.sender_identity_id <> cp.sender_identity_id)) AS other_number
       FROM campaign cp
       JOIN contact c ON c.org_id = cp.org_id
-      WHERE cp.id = ${campaignId} AND cp.org_id = ${orgId}
-        AND (
-          (cp.from_import_run_id IS NOT NULL AND EXISTS (
-            SELECT 1 FROM import_row ir
-            WHERE ir.import_run_id = cp.from_import_run_id
-              AND ir.contact_id = c.id AND ir.outcome IN ('created', 'updated')
-          ))
-          OR (cp.explicit_contact_ids IS NOT NULL
-              AND cp.explicit_contact_ids @> to_jsonb(c.id::text))
-          OR (cp.from_tag_id IS NOT NULL AND EXISTS (
-            SELECT 1 FROM contact_tag ct
-            WHERE ct.tag_id = cp.from_tag_id AND ct.contact_id = c.id AND ct.org_id = ${orgId}
-          ))
-          ${segmentBranch}
-        )
+      WHERE cp.id = ${campaignId} AND cp.org_id = ${orgId} AND (${who})
     )
     SELECT count(*)::int AS total,
            count(*) FILTER (WHERE reachable)::int AS reachable,
@@ -194,20 +219,12 @@ function sampleText(type: string, value: string): string {
 export async function fillInReport(
   tx: Transaction, orgId: string, audience: FillInAudience
 ): Promise<FillInReport> {
-  let who = sql`false`;
-  if (audience.fromImportRunId !== undefined) {
-    who = sql`EXISTS (SELECT 1 FROM import_row ir
-      WHERE ir.import_run_id = ${audience.fromImportRunId} AND ir.contact_id = c.id AND ir.outcome IN ('created', 'updated'))`;
-  } else if (audience.fromTagId !== undefined) {
-    who = sql`EXISTS (SELECT 1 FROM contact_tag ct WHERE ct.tag_id = ${audience.fromTagId} AND ct.contact_id = c.id AND ct.org_id = ${orgId})`;
-  } else if (audience.fromSegmentId !== undefined) {
-    const def = (await tx.execute(sql`
-      SELECT definition FROM segment WHERE id = ${audience.fromSegmentId} AND org_id = ${orgId}`
-    ) as unknown as Array<{ definition: SegmentDefinition }>)[0]?.definition;
-    if (def !== undefined) who = buildSegmentPredicate(def, orgId);
-  } else if (audience.explicitContactIds !== undefined) {
-    who = sql`${JSON.stringify(audience.explicitContactIds)}::jsonb @> to_jsonb(c.id::text)`;
-  }
+  const who = audienceRule(orgId, {
+    importRun: sql`${audience.fromImportRunId ?? null}::uuid`,
+    explicit: sql`${audience.explicitContactIds === undefined ? null : JSON.stringify(audience.explicitContactIds)}::jsonb`,
+    tag: sql`${audience.fromTagId ?? null}::uuid`,
+    segment: sql`${audience.fromSegmentId ?? null}::uuid`
+  }, await segmentPredicateFor(tx, orgId, audience.fromSegmentId ?? null));
 
   const fields = await loadCustomFields(tx, orgId);
   const out: FillInReportField[] = [];
@@ -226,13 +243,17 @@ export async function fillInReport(
     sample: nameRow?.sample?.split(/\s+/)[0] ?? null
   });
 
+  // Every field in one pass over the audience: each person's custom_fields unpacked into (key, value) rows, grouped by key.
+  const perKey = new Map((await tx.execute(sql`
+    SELECT kv.key AS "key",
+           count(*) FILTER (WHERE nullif(trim(kv.value), '') IS NOT NULL)::int AS have,
+           (array_agg(kv.value ORDER BY c.id) FILTER (WHERE nullif(trim(kv.value), '') IS NOT NULL))[1] AS sample
+    FROM contact c, LATERAL jsonb_each_text(coalesce(c.custom_fields, '{}'::jsonb)) AS kv
+    WHERE c.org_id = ${orgId} AND (${who})
+    GROUP BY kv.key`
+  ) as unknown as Array<{ key: string; have: number; sample: string | null }>).map((r) => [r.key, r]));
   for (const f of fields) {
-    const r = (await tx.execute(sql`
-      SELECT count(*) FILTER (WHERE nullif(trim(c.custom_fields ->> ${f.key}), '') IS NOT NULL)::int AS have,
-             (array_agg(c.custom_fields ->> ${f.key} ORDER BY c.id)
-               FILTER (WHERE nullif(trim(c.custom_fields ->> ${f.key}), '') IS NOT NULL))[1] AS sample
-      FROM contact c WHERE c.org_id = ${orgId} AND (${who})`
-    ) as unknown as Array<{ have: number; sample: string | null }>)[0];
+    const r = perKey.get(f.key);
     out.push({ key: f.key, label: f.label, have: r?.have ?? 0, sample: r?.sample === null || r?.sample === undefined ? null : sampleText(f.type, r.sample) });
   }
   return { total, fields: out };
@@ -267,17 +288,7 @@ export async function campaignProgress(
 export async function snapshotAudience(
   tx: Transaction, orgId: string, campaignId: string
 ): Promise<number> {
-  // A dynamic segment resolves in TypeScript (the filter engine turns its stored definition into a
-  // bound predicate) and is composed into the audience WHERE as one more branch. Fetched first so
-  // the branch is empty for the other targeting modes, leaving their SQL untouched.
-  const segRows = await tx.execute(sql`
-    SELECT s.definition AS "definition"
-    FROM campaign cp JOIN segment s ON s.id = cp.from_segment_id
-    WHERE cp.id = ${campaignId} AND cp.org_id = ${orgId}`);
-  const segDef = (segRows as unknown as Array<{ definition: SegmentDefinition }>)[0]?.definition;
-  const segmentBranch = segDef === undefined
-    ? sql``
-    : sql`OR (cp.from_segment_id IS NOT NULL AND (${buildSegmentPredicate(segDef, orgId)}))`;
+  const who = await campaignAudienceWhere(tx, orgId, campaignId);
 
   const rows = await tx.execute(sql`
     WITH audience AS (
@@ -297,26 +308,7 @@ export async function snapshotAudience(
              ) AS own_number
       FROM campaign cp
       JOIN contact c ON c.org_id = cp.org_id
-      WHERE cp.id = ${campaignId} AND cp.org_id = ${orgId}
-        AND (
-          -- Either everyone a named import run actually created or updated …
-          (cp.from_import_run_id IS NOT NULL AND EXISTS (
-            SELECT 1 FROM import_row ir
-            WHERE ir.import_run_id = cp.from_import_run_id
-              AND ir.contact_id = c.id AND ir.outcome IN ('created', 'updated')
-          ))
-          -- … or exactly the contacts that were listed. Never "everyone" implicitly.
-          OR (cp.explicit_contact_ids IS NOT NULL
-              AND cp.explicit_contact_ids @> to_jsonb(c.id::text))
-          -- … or everyone carrying a named tag, resolved here so adding a contact to the tag
-          -- after launch never changes who a running campaign is messaging.
-          OR (cp.from_tag_id IS NOT NULL AND EXISTS (
-            SELECT 1 FROM contact_tag ct
-            WHERE ct.tag_id = cp.from_tag_id AND ct.contact_id = c.id AND ct.org_id = ${orgId}
-          ))
-          -- … or everyone a dynamic segment's filter matches, resolved and frozen here.
-          ${segmentBranch}
-        )
+      WHERE cp.id = ${campaignId} AND cp.org_id = ${orgId} AND (${who})
     )
     INSERT INTO campaign_recipient (org_id, campaign_id, contact_id, status, skip_reason)
     SELECT ${orgId}, ${campaignId}, contact_id,
