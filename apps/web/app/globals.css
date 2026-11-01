@@ -30,10 +30,12 @@
   --color-border: #e5e7eb;
   --color-ink: #0f172a;
   --color-muted: #64748b;
-  --color-accent: #16a34a;
+  /* Buttons and links: 5.0:1 with white (CW-9.1). The brighter green below is only for dots, bars and the countdown ring. */
+  --color-accent: #15803d;
   --color-accent-soft: #e8f7ee;
   --color-on-accent: #ffffff;
   --color-lime: #4ade80;
+  --color-bright: #16a34a;
   --color-info: #2563eb;
   --color-success: #15803d;
   --color-success-soft: #e8f7ee;
@@ -69,6 +71,7 @@
     --color-accent-soft: #10261a;
     --color-on-accent: #04210f;
     --color-lime: #86efac;
+    --color-bright: #3ddc84;
     --color-info: #7fb0ff;
     --color-success: #5ee59a;
     --color-success-soft: #10261a;
@@ -97,6 +100,7 @@
       --color-accent-soft: #10261a;
       --color-on-accent: #04210f;
       --color-lime: #86efac;
+      --color-bright: #3ddc84;
       --color-info: #7fb0ff;
       --color-success: #5ee59a;
       --color-success-soft: #10261a;

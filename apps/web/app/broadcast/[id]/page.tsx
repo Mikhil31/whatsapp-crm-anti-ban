@@ -1,41 +1,39 @@
 import { redirect, notFound } from 'next/navigation';
 import Link from 'next/link';
 import {
-  getCampaign, getCampaignEta, listCampaignRecipients, previewCampaign, getMe, CrmApiError, NotAuthenticatedError
+  getCampaign, getCampaignEta, listCampaignRecipients, listSenders, previewCampaign, getMe, CrmApiError, NotAuthenticatedError
 } from '@/lib/crm';
-import type { Me, CampaignDetail, CampaignRecipient, CampaignPreview, CampaignEta, RecipientPage } from '@/lib/crm';
+import type { Me, CampaignDetail, CampaignPreview, CampaignEta, RecipientPage, CampaignRecipient, Sender } from '@/lib/crm';
 import { campaignStatusBadge } from '../campaign-status';
-import { Meter, initialsOf } from '../../ui';
 import { CampaignControls, SendAnywayButton } from '../campaign-controls';
 import { AutoRefresh } from '../auto-refresh';
 import { GATE_LABEL } from '../gates';
-import { describeReason } from '@/lib/reasons';
-import { formatWait } from '@/lib/visibility';
-import { ReasonButton, ReasonSentence } from '@/components/reason-action';
-import { EtaLine } from '@/components/live-lines';
+import { estimateTimes, isShow, REASON_SHOW_PREFIX } from '@/lib/recipient-status';
+import { LivePanel } from './live-panel';
+import { RecipientList } from './recipient-list';
+import { FilterBar } from './filter-bar';
 
 /** Rendered per request — progress and the status/search filters come live from the query string. */
 export const dynamic = 'force-dynamic';
 
-/** The recipient statuses, in the order the filter bar shows them. */
-const STATUSES = ['sent', 'queued', 'pending', 'skipped', 'failed'] as const;
-
 /**
- * One campaign's page: its progress and estimated finish, the message it sends, and the **per-recipient table**: every recipient in
- * a terminal or pending state, none silently absent, each with its state, the reason it is held, skipped or failed in a sentence,
- * the action that goes with it, and the gap drawn for it. Filterable by state and reason, searchable by name or number, paged.
- * This is how an operator answers "who did this reach, and why not the rest?" (F5 AC-5, F6 AC-10.2).
+ * One campaign's page: a live panel (is it working, who is next, when it is done), the message it sends, and the **list of everyone**
+ * in send order from the moment it starts, none silently absent, each with where they are in words, the latest message in their
+ * chat, and for those not reached the reason and the action that goes with it. One search box and one Show menu, paged.
+ * This is how an operator answers "who did this reach, and why not the rest?" (F5 AC-5, F6 AC-10.2, F13 section 2).
  */
 export default async function CampaignPage(
   { params, searchParams }: {
     params: Promise<{ id: string }>;
-    searchParams: Promise<{ status?: string; reason?: string; q?: string; cursor?: string; created?: string }>;
+    searchParams: Promise<{ show?: string; reason?: string; q?: string; cursor?: string; created?: string }>;
   }
 ) {
   const { id } = await params;
-  const { status, reason, q, cursor, created } = await searchParams;
-  const activeStatus = typeof status === 'string' ? status : '';
-  const activeReason = typeof reason === 'string' ? reason : '';
+  const { show, reason, q, cursor, created } = await searchParams;
+  // The Show menu writes either a group (`waiting`) or `reason:<code>`; a reason can also come on its own.
+  const showRaw = typeof show === 'string' ? show : '';
+  const activeReason = showRaw.startsWith(REASON_SHOW_PREFIX) ? showRaw.slice(REASON_SHOW_PREFIX.length) : typeof reason === 'string' ? reason : '';
+  const activeShow = isShow(showRaw) ? showRaw : '';
   const query = typeof q === 'string' ? q : '';
   const activeCursor = typeof cursor === 'string' ? cursor : '';
   const serverNow = new Date().toISOString();
@@ -44,6 +42,8 @@ export default async function CampaignPage(
   let campaign: CampaignDetail | null = null;
   let page: RecipientPage = { data: [], nextCursor: null, reasons: [] };
   let eta: CampaignEta | null = null;
+  let sender: Sender | null = null;
+  let head: CampaignRecipient | null = null;
   let preview: CampaignPreview | null = null;
   let failure: string | null = null;
   let expired = false;
@@ -51,12 +51,22 @@ export default async function CampaignPage(
   try {
     [campaign, page, me] = await Promise.all([
       getCampaign(id),
-      listCampaignRecipients(id, { status: activeStatus, reason: activeReason, q: query, cursor: activeCursor }),
+      listCampaignRecipients(id, { show: activeShow, reason: activeReason, q: query, cursor: activeCursor }),
       getMe()
     ]);
     // When it finishes only means something once it has an audience that is still being sent to. If it cannot be read the page
     // still works without it.
     if (campaign.status === 'running' || campaign.status === 'paused') eta = await getCampaignEta(id).catch((): CampaignEta | null => null);
+    // Who goes next and when: the first queued person in send order, and the number's lane says when its message goes. Neither is
+    // needed for the page to work, so a failure leaves them out.
+    if (campaign.status === 'running' || campaign.status === 'paused') {
+      const [senders, queued] = await Promise.all([
+        listSenders().catch((): Sender[] => []),
+        listCampaignRecipients(id, { show: 'waiting', limit: 1 }).catch((): RecipientPage | null => null)
+      ]);
+      sender = senders.find((x) => x.id === campaign?.senderIdentityId) ?? null;
+      head = queued?.data[0] ?? null;
+    }
     // A draft has no frozen audience yet, so its progress is all zeros — a dry-run preview is the
     // useful thing to show before start. One extra round trip, and only for drafts.
     if (campaign.status === 'draft') preview = await previewCampaign(id);
@@ -73,6 +83,17 @@ export default async function CampaignPage(
   if (expired) redirect(`/login?next=/broadcast/${id}`);
   if (missing) notFound();
   const recipients = page.data;
+  // Who goes next, and a guess at when each person after them goes. The head's time is the number's own next-send time; a guess
+  // is only right on a page that starts at the head of the queue, so a filter, a search or a later page gets none.
+  const headHeld = head !== null && (head.holdReason ?? null) !== null;
+  const headDueAt = head === null || headHeld ? null : sender?.lane?.nextSendAt ?? null;
+  const unfiltered = activeShow === '' && activeReason === '' && query === '' && activeCursor === '';
+  const around: Record<string, string> = {};
+  if (unfiltered && head !== null && headDueAt !== null) {
+    for (const [rid, at] of estimateTimes(recipients, head.id, new Date(headDueAt))) around[rid] = at.toISOString();
+  }
+  const panelStatus = campaign?.status === 'running' || campaign?.status === 'paused' || campaign?.status === 'completed' || campaign?.status === 'cancelled'
+    ? campaign.status : null;
 
   return (
     <main className="page">
@@ -121,6 +142,7 @@ export default async function CampaignPage(
               Paused automatically: WhatsApp refused or logged out the sending number, which can mean a ban.
               Open WhatsApp on that phone and look for a notice before resuming anything. The Numbers page has
               the details.
+              {' '}<Link href="/numbers" className="btn btn-sm min-h-11" data-action="open-number">Open the number</Link>
             </p>
           )}
 
@@ -128,6 +150,9 @@ export default async function CampaignPage(
             <p role="alert" className="mb-4 notice notice-warning">
               Paused automatically: the sending number was removed under Linked devices on the phone. Link it
               again on the Numbers page, then resume.
+              {' '}<Link
+                href={`/link?start=${encodeURIComponent(campaign.senderIdentityId)}`} className="btn btn-sm min-h-11" data-action="relink"
+              >Link it again</Link>
             </p>
           )}
 
@@ -142,9 +167,12 @@ export default async function CampaignPage(
             <div className="min-w-0">
               {campaign.status === 'draft' && preview !== null
                 ? <DraftPreview preview={preview} />
-                : <ProgressHeader campaign={campaign} activeStatus={activeStatus} query={query} id={id} />}
-
-              {eta !== null && <EtaLine eta={eta} serverNow={serverNow} />}
+                : panelStatus !== null && (
+                  <LivePanel
+                    id={id} status={panelStatus} progress={campaign.progress} eta={eta} serverNow={serverNow} activeShow={activeShow}
+                    next={head === null ? null : { name: head.displayName ?? head.identity ?? 'the next person', dueAt: headDueAt, gapMs: head.plannedGapMs ?? null }}
+                  />
+                )}
 
               {(campaign.warnings ?? []).map((w) => (
                 <p key={w.code} role="status" data-testid={`warning-${w.code}`} className="mb-3 notice notice-warning">{w.message}</p>
@@ -156,9 +184,7 @@ export default async function CampaignPage(
                   <span className="text-sm text-muted">{recipients.length} shown{page.nextCursor !== null ? ', more on the next page' : ''}</span>
                 </div>
 
-                <StatusFilterBar id={id} activeStatus={activeStatus} activeReason={activeReason} query={query} />
-                <ReasonFilterBar id={id} activeStatus={activeStatus} activeReason={activeReason} query={query} reasons={page.reasons} />
-                <SearchBox id={id} activeStatus={activeStatus} activeReason={activeReason} query={query} />
+                <FilterBar id={id} show={activeShow} reason={activeReason} query={query} reasons={page.reasons} />
 
                 {recipients.length === 0 && (
                   <p className="text-sm text-muted">
@@ -168,14 +194,16 @@ export default async function CampaignPage(
                   </p>
                 )}
 
-                {recipients.length > 0 && <RecipientTable recipients={recipients} />}
+                {recipients.length > 0 && (
+                  <RecipientList recipients={recipients} serverNow={serverNow} headId={head?.id ?? null} headDueAt={headDueAt} around={around} />
+                )}
 
                 <nav aria-label="Recipient pages" className="mt-3 flex items-center justify-between text-sm">
                   {activeCursor !== ''
-                    ? <Link href={hrefFor(id, activeStatus, query, activeReason)} className="text-muted hover:text-ink">← First page</Link>
+                    ? <Link href={hrefFor(id, activeShow, query, activeReason)} className="text-muted hover:text-ink">← First page</Link>
                     : <span />}
                   {page.nextCursor !== null
-                    ? <Link href={hrefFor(id, activeStatus, query, activeReason, page.nextCursor)} className="btn btn-sm" rel="next">Next page →</Link>
+                    ? <Link href={hrefFor(id, activeShow, query, activeReason, page.nextCursor)} className="btn btn-sm" rel="next">Next page →</Link>
                     : <span />}
                 </nav>
               </section>
@@ -209,62 +237,6 @@ function StatusBadge({ status }: { status: string }) {
     <span className={`badge ${badge.cls}`}>
       {badge.label}
     </span>
-  );
-}
-
-/**
- * The campaign's progress as a compact header: the bar, then the counts as one line of links, each filtering the table below to that
- * state — so the summary and the detail are one thing, not two.
- */
-function ProgressHeader(
-  { campaign, activeStatus, query, id }:
-  { campaign: CampaignDetail; activeStatus: string; query: string; id: string }
-) {
-  const p = campaign.progress;
-  const counts: Array<{ key: string; label: string; value: number; filter: string }> = [
-    { key: 'total', label: 'total', value: p.total, filter: '' },
-    { key: 'sent', label: 'sent', value: p.sent, filter: 'sent' },
-    { key: 'queued', label: 'queued', value: p.queued, filter: 'queued' },
-    { key: 'pending', label: 'pending', value: p.pending, filter: 'pending' },
-    { key: 'skipped', label: 'skipped', value: p.skipped, filter: 'skipped' },
-    { key: 'failed', label: 'failed', value: p.failed, filter: 'failed' }
-  ];
-
-  // The bar counts people actually attempted. Skipped people were never sent anything, so a campaign that skipped everyone
-  // must not look finished.
-  const done = p.sent + p.failed;
-  const allSkipped = p.total > 0 && p.skipped === p.total;
-  return (
-    <div className="card mb-3 p-4">
-      <div className="mb-2 flex items-baseline justify-between">
-        <p className="font-medium">
-          <span className="tabular-nums">{done}</span> of <span className="tabular-nums">{p.total}</span> sent
-          {p.skipped > 0 && <span className="text-muted"> · {p.skipped} skipped</span>}
-          {p.queued > 0 && <span className="text-muted"> · {p.queued} queued</span>}
-        </p>
-        <p className="text-sm tabular-nums text-muted">
-          {p.total === 0 ? 0 : Math.round((done / p.total) * 100)}%
-        </p>
-      </div>
-      <Meter value={done} max={p.total} label="Campaign progress" />
-      <ul aria-label="Counts" className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm">
-        {counts.map((c) => (
-          <li key={c.key}>
-            <Link
-              href={hrefFor(id, c.filter, query)}
-              className={(activeStatus === c.filter) ? 'font-semibold text-ink underline' : 'text-muted hover:text-ink'}
-            >
-              <span className="tabular-nums">{c.value}</span> {c.label}
-            </Link>
-          </li>
-        ))}
-      </ul>
-      {allSkipped && (
-        <p role="alert" className="mt-2 text-sm text-warning">
-          Nothing was sent: all {p.total} people were skipped. See the Skipped list below for why.
-        </p>
-      )}
-    </div>
   );
 }
 
@@ -311,151 +283,11 @@ function MessageBody({ body }: { body: string }) {
   );
 }
 
-/** The row of state filters. "All" clears it; the active one is highlighted. */
-function StatusFilterBar(
-  { id, activeStatus, activeReason, query }: { id: string; activeStatus: string; activeReason: string; query: string }
-) {
-  const chip = (active: boolean): string =>
-    `badge capitalize ${active ? 'badge-accent !border-accent/40 font-semibold' : 'text-muted hover:bg-accent-soft'}`;
-  return (
-    <div className="mb-2 flex flex-wrap items-center gap-1.5">
-      <span className="text-xs text-muted">State:</span>
-      <Link href={hrefFor(id, '', query, activeReason)} className={chip(activeStatus === '')}>All</Link>
-      {STATUSES.map((s) => (
-        <Link key={s} href={hrefFor(id, s, query, activeReason)} className={chip(activeStatus === s)}>{s}</Link>
-      ))}
-    </div>
-  );
-}
-
-/** The reasons this campaign has, as filters, each with how many. Absent while nobody is held, skipped or failed. */
-function ReasonFilterBar(
-  { id, activeStatus, activeReason, query, reasons }:
-  { id: string; activeStatus: string; activeReason: string; query: string; reasons: RecipientPage['reasons'] }
-) {
-  // A reason in the address that this campaign does not have still shows, so it can be cleared.
-  const list = activeReason !== '' && !reasons.some((r) => r.reason === activeReason)
-    ? [{ reason: activeReason, count: 0 }, ...reasons] : reasons;
-  if (list.length === 0) return null;
-  const chip = (active: boolean): string =>
-    `badge ${active ? 'badge-accent !border-accent/40 font-semibold' : 'text-muted hover:bg-accent-soft'}`;
-  return (
-    <div data-testid="reason-filters" className="mb-3 flex flex-wrap items-center gap-1.5">
-      <span className="text-xs text-muted">Reason:</span>
-      <Link href={hrefFor(id, activeStatus, query)} className={chip(activeReason === '')}>Any</Link>
-      {list.map((r) => (
-        <Link key={r.reason} href={hrefFor(id, activeStatus, query, r.reason)} className={chip(activeReason === r.reason)}
-          title={describeReason(r.reason).sentence} data-reason={r.reason}>
-          {r.reason} <span className="tabular-nums text-muted">{r.count}</span>
-        </Link>
-      ))}
-    </div>
-  );
-}
-
-/** Search by contact name or number, keeping the active filters. */
-function SearchBox(
-  { id, activeStatus, activeReason, query }: { id: string; activeStatus: string; activeReason: string; query: string }
-) {
-  return (
-    <form className="mb-4 flex gap-2" action={`/broadcast/${id}`}>
-      {activeStatus !== '' && <input type="hidden" name="status" value={activeStatus} />}
-      {activeReason !== '' && <input type="hidden" name="reason" value={activeReason} />}
-      <input
-        name="q"
-        defaultValue={query}
-        placeholder="Search recipient name or number…"
-        aria-label="Search recipients"
-        className="flex-1 field"
-      />
-      <button
-        type="submit"
-        className="btn"
-      >
-        Search
-      </button>
-    </form>
-  );
-}
-
-/** The state a recipient is in, in a word: for a sent recipient the message's own state (delivered, read) says more than "sent". */
-function stateOf(r: CampaignRecipient): string {
-  return r.status === 'sent' && r.messageStatus !== null && r.messageStatus !== 'sent' ? r.messageStatus : r.status;
-}
-
-/** Every recipient of this page: who, in what state, why, what can be done, and the gap drawn for them. */
-function RecipientTable({ recipients }: { recipients: CampaignRecipient[] }) {
-  return (
-    <div className="card overflow-x-auto">
-      <table data-testid="recipient-table" className="w-full text-left text-sm">
-        <thead className="text-xs text-muted">
-          <tr>
-            <th scope="col" className="px-4 py-2 font-medium">Contact</th>
-            <th scope="col" className="px-3 py-2 font-medium">State</th>
-            <th scope="col" className="px-3 py-2 font-medium">Reason</th>
-            <th scope="col" className="px-3 py-2 font-medium">Action</th>
-            <th scope="col" className="px-3 py-2 font-medium">Gap</th>
-          </tr>
-        </thead>
-        <tbody>
-          {recipients.map((r) => <RecipientRow key={r.id} recipient={r} />)}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-/** One recipient's row. */
-function RecipientRow({ recipient: r }: { recipient: CampaignRecipient }) {
-  const state = stateOf(r);
-  const cls =
-    r.status === 'sent' ? 'text-success border-transparent bg-success-soft'
-    : r.status === 'failed' ? 'text-danger border-danger/50'
-    : r.status === 'skipped' ? 'text-warning border-warning/40 bg-warning-soft'
-    : 'text-muted border-border';
-  const target = {
-    messageId: r.messageId ?? null, senderId: r.senderIdentityId ?? null, contactId: r.contactId ?? null,
-    conversationId: r.conversationId ?? null
-  };
-  // A skipped recipient has no message, so its reason is the skip reason; otherwise the hold or the failure.
-  const code = r.reason ?? null;
-  return (
-    <tr data-testid="recipient-row" data-status={r.status} data-reason={code ?? ''} className="border-t border-border align-top">
-      <td className="px-4 py-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="avatar size-9 text-sm" aria-hidden>
-            {initialsOf(r.displayName ?? r.identity ?? '?')}
-          </span>
-          <div className="min-w-0">
-            <p className="truncate font-medium">{r.displayName ?? r.identity ?? 'Unnamed contact'}</p>
-            <p className="truncate text-xs text-muted">
-              {r.identity ?? 'no contact details'}
-              {r.attemptedAt !== null && <span suppressHydrationWarning> · {new Date(r.attemptedAt).toLocaleString()}</span>}
-            </p>
-          </div>
-        </div>
-      </td>
-      <td className="px-3 py-3"><span className={`badge capitalize ${cls}`}>{state}</span></td>
-      <td className="px-3 py-3">
-        {code === null ? <span className="text-muted">—</span> : (
-          <ReasonSentence code={code} until={r.holdUntil ?? null} detail={r.errorDetail ?? null} {...target} />
-        )}
-      </td>
-      <td className="px-3 py-3">
-        {code !== null && <ReasonButton code={code} until={r.holdUntil ?? null} detail={r.errorDetail ?? null} {...target} />}
-      </td>
-      <td className="whitespace-nowrap px-3 py-3 tabular-nums text-muted">
-        {r.plannedGapMs === null || r.plannedGapMs === undefined ? '—' : formatWait(r.plannedGapMs)}
-      </td>
-    </tr>
-  );
-}
-
-/** Builds a link to this campaign filtered by state, reason and search term, at a page (the cursor of the page before). */
-function hrefFor(id: string, status: string, query: string, reason = '', cursor = ''): string {
+/** Builds a link to this campaign showing one group and search term, at a page (the cursor of the page before). */
+function hrefFor(id: string, show: string, query: string, reason = '', cursor = ''): string {
   const p = new URLSearchParams();
-  if (status !== '') p.set('status', status);
-  if (reason !== '') p.set('reason', reason);
+  if (reason !== '') p.set('show', `${REASON_SHOW_PREFIX}${reason}`);
+  else if (show !== '') p.set('show', show);
   if (query !== '') p.set('q', query);
   if (cursor !== '') p.set('cursor', cursor);
   const qs = p.toString();

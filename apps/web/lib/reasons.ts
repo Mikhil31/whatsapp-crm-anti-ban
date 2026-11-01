@@ -30,8 +30,25 @@ export interface ReasonContext {
 }
 
 const LABEL: Record<ReasonAction, string> = {
-  retry: 'Retry', relink: 'Relink', resume: 'Resume', lift: 'Lift', send_by_hand: 'Send by hand', send_now: 'Send now'
+  retry: 'Try again', relink: 'Link the number again', resume: 'Resume', lift: 'Allow messages again', send_by_hand: 'Open chat',
+  send_now: 'Send now'
 };
+
+/** A code in two or three words, for filters and row details ("WhatsApp refused", "Quiet hours"). Never the code itself. */
+const SHORT: Record<string, string> = {
+  timelock: 'WhatsApp timelock', new_chat_cap: 'New-chat limit', refused_463: 'WhatsApp refused', unlinked: 'Number unlinked',
+  many_undelivered: 'Not reaching people', decrypt_retry: 'Phone could not read it', decrypt_wave: 'Phones could not read it',
+  likely_blocked: 'Probably blocked', dnc: 'Asked not to be messaged', not_on_whatsapp: 'Not on WhatsApp', quiet_hours: 'Quiet hours',
+  send_error: 'Send failed', sender_not_connected: 'Number not connected', no_whatsapp_number: 'No phone number',
+  own_number: 'Own number', empty_body: 'No text', no_phone: 'No phone number', cancelled: 'Cancelled', engaged: 'Agent is chatting',
+  cooldown: 'Messaged in the last 14 days', in_other_campaign: 'In another campaign', media_storage_unavailable: 'File unavailable'
+};
+
+/** The short wording for a reason code, never the code itself. Unknown codes read "Other reason". */
+export function reasonLabel(code: string | null | undefined): string {
+  const raw = (code ?? '').trim();
+  return SHORT[ALIAS[raw] ?? raw] ?? 'Other reason';
+}
 
 /** `HH:MM`, 24 hours, in `timeZone` (the viewer's own when absent). */
 export function clockTime(at: Date | string, timeZone?: string): string {

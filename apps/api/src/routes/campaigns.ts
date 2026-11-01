@@ -7,6 +7,7 @@ import {
   storeCampaignPicture, listCampaignPictures, CampaignPictureError, GifConversionError
 } from '@crm/core';
 import type { StorageDriver } from '@crm/storage';
+import type { KmsDriver } from '@crm/kms-local';
 import { auditActor, requireScope } from '../auth.js';
 import { problem } from '../problem.js';
 import { requireUuidParam } from '../params.js';
@@ -68,12 +69,39 @@ function campaignWarnings(body: string, aiTemplateId: string | null): Array<{ co
  */
 const listRecipientsQuery = z.object({
   status: z.enum(['pending', 'queued', 'sent', 'failed', 'skipped']).optional(),
+  /** The campaign page's plain-words filter (CW-2.4): waiting, reached, not yet, or the sent / delivered / read ticks. */
+  show: z.enum(['waiting', 'reached', 'not_yet', 'sent', 'delivered', 'read']).optional(),
   q: z.string().trim().min(1).max(100).optional(),
   /** Narrows to one reason code: why a recipient was skipped, is held, or failed (F6 AC-10.2). */
   reason: z.string().trim().min(1).max(64).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   cursor: z.string().uuid().optional()
 });
+
+/** Longest the last-message line gets; the page cuts it to one line anyway. */
+const LAST_MESSAGE_MAX = 140;
+
+/**
+ * The latest message of a chat as one short line (CW-2.7): who said it, and its text decrypted (cut at 140 characters), or
+ * "Photo" / "Voice note" / "Document" for media. No AI. A body that cannot be decrypted shows as nothing rather than failing the list.
+ */
+function lastMessageOf(
+  kms: KmsDriver, direction: string | null, kind: string | null, bodyEnc: Uint8Array | null
+): { from: 'us' | 'them'; text: string; kind: string } | null {
+  if (direction === null || kind === null) return null;
+  const from = direction === 'outbound' ? 'us' : 'them';
+  if (kind !== 'text') {
+    const label = kind === 'audio' || kind === 'voice' || kind === 'ptt' ? 'Voice note'
+      : kind === 'image' || kind === 'sticker' ? 'Photo' : kind === 'video' ? 'Video' : 'Document';
+    return { from, text: label, kind };
+  }
+  let text = '';
+  if (bodyEnc !== null) {
+    try { text = new TextDecoder().decode(kms.decrypt(bodyEnc)).replace(/\s+/g, ' ').trim(); }
+    catch { text = ''; }
+  }
+  return { from, text: text.length > LAST_MESSAGE_MAX ? text.slice(0, LAST_MESSAGE_MAX) : text, kind };
+}
 
 /**
  * Campaigns — a bulk send, and the controls for stopping one.
@@ -82,7 +110,7 @@ const listRecipientsQuery = z.object({
  * audience, and the gateway converts recipients into messages a small batch at a time. Nothing in this
  * router can make a message go out faster (M12).
  */
-export function campaignsRouter(storage: StorageDriver): Router {
+export function campaignsRouter(storage: StorageDriver, kms: KmsDriver): Router {
   const router = Router();
 
   /**
@@ -244,7 +272,14 @@ export function campaignsRouter(storage: StorageDriver): Router {
         const campaign = (rows as unknown as Array<Record<string, unknown>>)[0];
         if (!campaign) return null;
 
-        const progress = await campaignProgress(tx, orgId, id);
+        // How many of the people reached are at the delivered and read ticks. Delivered includes read, as in WhatsApp.
+        const ticks = (await tx.execute(sql`
+          SELECT count(*) FILTER (WHERE m.status IN ('delivered', 'read'))::int AS delivered,
+                 count(*) FILTER (WHERE m.status = 'read')::int AS read
+          FROM campaign_recipient cr JOIN message m ON m.id = cr.message_id
+          WHERE cr.campaign_id = ${id} AND cr.org_id = ${orgId} AND cr.status = 'sent'`
+        ) as unknown as Array<{ delivered: number; read: number }>)[0] ?? { delivered: 0, read: 0 };
+        const progress = { ...(await campaignProgress(tx, orgId, id)), ...ticks };
         const warnings = campaignWarnings(String(campaign.body), (campaign.aiTemplateId as string | null) ?? null);
         return { ...campaign, progress, warnings };
       });
@@ -327,7 +362,8 @@ export function campaignsRouter(storage: StorageDriver): Router {
       }
       const orgId = req.crm!.orgId;
       const id = String(req.params.id);
-      const { status, q, reason, limit, cursor } = parsed.data;
+      const { status, show, q, reason, limit, cursor } = parsed.data;
+      const showFilter = show ?? null;
       const like = q === undefined ? null : `%${q}%`;
       const statusFilter = status ?? null;
       const reasonFilter = reason ?? null;
@@ -337,9 +373,11 @@ export function campaignsRouter(storage: StorageDriver): Router {
 
       const result = await req.tenant!(async (tx) => {
         // A missing campaign is a 404, not an empty list — the same shape as GET /:id.
-        const exists = await tx.execute(sql`
-          SELECT 1 FROM campaign WHERE id = ${id} AND org_id = ${orgId}`);
-        if ((exists as unknown as unknown[]).length === 0) return null;
+        const exists = (await tx.execute(sql`
+          SELECT sender_identity_id AS "senderId" FROM campaign WHERE id = ${id} AND org_id = ${orgId}`
+        )) as unknown as Array<{ senderId: string }>;
+        if (exists.length === 0) return null;
+        const senderId = exists[0]!.senderId;
 
         const page = await tx.execute(sql`
           SELECT cr.id, cr.status, cr.skip_reason AS "skipReason",
@@ -347,6 +385,8 @@ export function campaignsRouter(storage: StorageDriver): Router {
                  c.display_name AS "displayName",
                  m.status AS "messageStatus", m.hold_reason AS "holdReason",
                  ${reasonOf} AS "reason", m.hold_until AS "holdUntil", m.error_code AS "errorCode", m.error_detail AS "errorDetail",
+                 m.sent_at AS "sentAt", m.delivered_at AS "deliveredAt", m.read_at AS "readAt",
+                 lm.direction AS "lastDirection", lm.content_type AS "lastKind", lm.body_enc AS "lastBodyEnc",
                  cr.planned_gap_ms AS "plannedGapMs", cr.message_id AS "messageId", cr.contact_id AS "contactId",
                  m.conversation_id AS "conversationId", v.sender_identity_id AS "senderIdentityId",
                  (SELECT ci.value_normalized FROM contact_identity ci
@@ -356,14 +396,27 @@ export function campaignsRouter(storage: StorageDriver): Router {
           JOIN contact c ON c.id = cr.contact_id AND c.org_id = ${orgId}
           LEFT JOIN message m ON m.id = cr.message_id
           LEFT JOIN conversation v ON v.id = m.conversation_id
+          -- The latest message in this person's chat with the campaign's number, for the one grey line under the name (CW-2.7).
+          LEFT JOIN LATERAL (
+            SELECT x.direction, x.content_type, x.body_enc FROM message x
+            WHERE x.org_id = ${orgId} AND x.conversation_id = coalesce(m.conversation_id,
+              (SELECT cv.id FROM conversation cv WHERE cv.contact_id = cr.contact_id AND cv.sender_identity_id = ${senderId}))
+            ORDER BY x.created_at DESC LIMIT 1) lm ON true
           WHERE cr.campaign_id = ${id} AND cr.org_id = ${orgId}
             AND (${statusFilter}::text IS NULL OR cr.status = ${statusFilter})
+            AND (${showFilter}::text IS NULL
+                 OR (${showFilter} = 'waiting' AND cr.status IN ('pending', 'queued'))
+                 OR (${showFilter} IN ('reached', 'sent') AND cr.status = 'sent')
+                 OR (${showFilter} = 'not_yet' AND cr.status IN ('failed', 'skipped'))
+                 OR (${showFilter} = 'delivered' AND cr.status = 'sent' AND m.status IN ('delivered', 'read'))
+                 OR (${showFilter} = 'read' AND cr.status = 'sent' AND m.status = 'read'))
             AND (${reasonFilter}::text IS NULL OR ${reasonOf} = ${reasonFilter})
             AND (${like}::text IS NULL
                  OR c.display_name ILIKE ${like}
                  OR EXISTS (SELECT 1 FROM contact_identity ci2
                             WHERE ci2.contact_id = c.id AND ci2.value_normalized ILIKE ${like}))
             AND (${after}::uuid IS NULL OR cr.id > ${after}::uuid)
+          -- cr.id is the send order: the gateway queues recipients by id and the finish estimate walks them the same way.
           ORDER BY cr.id ASC
           LIMIT ${limit}`);
         // The reasons present in the whole campaign, for the filter (first page only: the list does not change as you page).
@@ -379,7 +432,12 @@ export function campaignsRouter(storage: StorageDriver): Router {
         res.status(404).json(problem(req, 404, 'NOT_FOUND', 'No such campaign.'));
         return;
       }
-      const data = result.page as unknown as Array<{ id: string }>;
+      const rows = result.page as unknown as Array<{
+        id: string; lastDirection: string | null; lastKind: string | null; lastBodyEnc: Uint8Array | null;
+      } & Record<string, unknown>>;
+      const data = rows.map(({ lastDirection, lastKind, lastBodyEnc, ...rest }) => ({
+        ...rest, lastMessage: lastMessageOf(kms, lastDirection, lastKind, lastBodyEnc)
+      }));
       const nextCursor = data.length === limit ? data[data.length - 1]!.id : null;
       res.json({ data, nextCursor, reasons: result.reasons });
     });
