@@ -14,7 +14,7 @@ Every tenant table has `org_id` and a row-level-security policy: the app runs ea
 | Table | What it is for | Rows now |
 |---|---|---|
 | [`ai_run`](#ai_run) | One row each time the AI assistant sends, tries, or is held back (and why), with the model and token counts, so its work and cost can be checked. | 0 |
-| [`audit_log`](#audit_log) | Append-only record of who did what and when: sign-ins, reassignments, overrides, exports. The app role cannot update or delete rows. | 1 |
+| [`audit_log`](#audit_log) | Append-only record of who did what and when: sign-ins, reassignments, overrides, exports. The app role cannot update or delete rows. | 0 |
 | [`key_rotation_state`](#key_rotation_state) | One row for the whole install: whether the background re-encryption of a key rotation is paused, and how much it has moved. Not per org, because the encryption key is not. | 0 |
 | [`sender_health_event`](#sender_health_event) | A timeline of what happened to a number: refused by WhatsApp, logged out unasked, or removed on the phone. | 0 |
 | [`whatsapp_notice`](#whatsapp_notice) | Every limit warning WhatsApp sent a number, as it arrived: a new-chat timelock or a new-chat cap update. The latest of each is also on the number’s connection row. | 0 |
@@ -45,7 +45,7 @@ Every tenant table has `org_id` and a row-level-security policy: the app runs ea
 | Table | What it is for | Rows now |
 |---|---|---|
 | [`import_row`](#import_row) | The ledger for one row of an upload: what it said, what the dry run decided, and which contact it produced. | 0 |
-| [`import_run`](#import_run) | One uploaded spreadsheet and what became of it: file hash (to refuse duplicates), counts, and whether it was committed or superseded. | 1 |
+| [`import_run`](#import_run) | One uploaded spreadsheet and what became of it: file hash (to refuse duplicates), counts, and whether it was committed or superseded. | 0 |
 
 ### Inbox
 
@@ -64,9 +64,9 @@ Every tenant table has `org_id` and a row-level-security policy: the app runs ea
 | Table | What it is for | Rows now |
 |---|---|---|
 | [`antiban_setting`](#antiban_setting) | An org’s sending settings, one row: quiet hours (on by default, 22:00 to 08:00) and the time zone they are read in, the closing message when someone opts out (on or off, the org’s contact number and email, a default purpose) and the org’s own stop and restart words. | 0 |
-| [`channel_auth_state`](#channel_auth_state) | The encrypted login credentials Baileys needs to keep a number linked across restarts. Losing the encryption key loses these. | 4974 |
-| [`channel_session`](#channel_session) | The live connection state of a number (connected, QR waiting, unlink requested). Churns constantly; three triggers here wake the gateway. | 1 |
-| [`sender_identity`](#sender_identity) | One of your WhatsApp numbers: its name, phone number and whether it is linked. | 1 |
+| [`channel_auth_state`](#channel_auth_state) | The encrypted login credentials Baileys needs to keep a number linked across restarts. Losing the encryption key loses these. | 0 |
+| [`channel_session`](#channel_session) | The live connection state of a number (connected, QR waiting, unlink requested). Churns constantly; three triggers here wake the gateway. | 0 |
+| [`sender_identity`](#sender_identity) | One of your WhatsApp numbers: its name, phone number and whether it is linked. | 0 |
 
 ### Workspaces and people
 
@@ -355,6 +355,8 @@ Row-level security: on and forced.
 | `media_asset_id` | uuid | yes |  |  |
 | `media_after_reply` | boolean | no | true |  |
 | `purpose` | text | yes |  |  |
+| `blank_fill_in_choice` | text | yes |  |  |
+| `fill_in_fallback` | text | yes |  |  |
 
 **References:**
 
