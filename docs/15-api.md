@@ -200,6 +200,19 @@ Worked examples with real responses, including every failure case, are in
 
 ---
 
+## Inbox screen reads (2026-11)
+
+All under `/api/v1`, scope `conversations:read`, tenant-scoped.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /inbox` | The chat list. Query: `q` (name, number or last-message text; the last message is decrypted in the API and only the newest 3000 chats are searched), `status` (`open` default, `closed`, `any`), `owner` (`all`, `me`, `unassigned`, or a user id), `view` (`all`, `needs`, `unread`, `ai`, `you`), `campaigns` and `files` (comma-separated ids), `limit` (≤ 200), `offset`. Returns `data` rows (contact, number, owner, `isAi`, `needsYou`, `unreadCount`, `lastAt`, `lastMessage {text, kind, direction, at}`) and `meta {total, counts, orgTotal}`; `counts` hold every chip with the other filters applied. A malformed filter is a 422, never a wider list. |
+| `GET /inbox/filters` | The campaigns and imported files chats came from, each with how many chats. |
+| `GET /conversations/:id/person` | The person behind a chat: name, phone, email, `fillIns` (only those with a value), `blankKeys` (saved columns they have no value for), files and campaigns. |
+
+`GET /conversations/:id/messages` now also returns `campaignId` and `campaignName` on each message.
+"Needs you" is an open chat where a person is meant to answer and the customer spoke last, or where the AI is stuck on the last message (blocked, failed or an empty answer).
+
 ## Endpoints added since the first slice (2026-10)
 
 All under `/api/v1`, all tenant-scoped. "admin" means a signed-in admin session (an API key never

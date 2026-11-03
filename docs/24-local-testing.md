@@ -223,6 +223,12 @@ assigned to someone else; the composer disables Reply and offers a note instead.
 
 ---
 
+## The Inbox screen (2026-11)
+
+Run a production build of the web app, the API and a gateway with `GATEWAY_CHANNEL=fake`, then `npm run local:seed` for three chats. Check at 1280 px and 375 px: search (`/` jumps to it), the chips, Filters, opening a chat, Details, Take over and Hand back to AI, a reply with a fill-in (the Preview line shows the person's values), a note, a pasted picture (up to five), Resolve and Undo.
+
+Give every process its own `STORAGE_PATH` (an absolute path) when several stacks share one machine: a gateway that reads another checkout's `./storage` fails a picture send with `no object at key`. A gateway left running from an earlier checkout will also pick up your database's messages, so check `pg_stat_activity` for `listen "gateway"` connections.
+
 ## Creating a contact
 
 The single-person route the host app uses (`contacts:write`). At least one of `phone` / `email`;

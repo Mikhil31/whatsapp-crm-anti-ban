@@ -52,6 +52,12 @@ Every `M*` in `00-prior-art.md` gets a named regression test. The highest-value 
 | M26 poison message | One unresolvable recipient does not affect the session or other sends |
 | M31 context bleed | Two conversations with one contact stay separate |
 
+## The Inbox screen
+
+- `tests/integration/inbox-list.test.ts` (needs a database): search by name, number and last message, the quick views and their counts, filters, paging, the person panel's fill-ins, and the campaign of each message.
+- `apps/web/lib/inbox-format.test.ts`: list times, search highlight and snippet, campaign dividers, reply fill-ins.
+- Playwright: `seeded-pages.spec.ts` (Filters, a note, Resolve and Reopen from Details), `ai-notice.spec.ts`, `zz-roles-flow.spec.ts` (presence and typing are read from the API, the Inbox no longer prints them).
+
 ## Preset and resource testing
 
 - **E2E runs on all three presets** — `lean`, `standard`, and a paid-equivalent (LocalStack S3

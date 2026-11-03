@@ -13,6 +13,16 @@ gotchas, how to run it); this is the *ledger of work* — a checklist you can tr
 
 ## Latest
 
+### 2026-11-03 — redesign: Inbox and chat, on `redesign/inbox`
+The Inbox (`/inbox`) in the new look, built from the approved design (Inbox and chat v8). **No migration**; the API gained read routes only.
+- **List:** search over name, number and the last message (bodies are encrypted, so the API decrypts and matches them) with a highlighted snippet; five quick views with counts (All, Needs you, Unread, AI answering, You answering); one Filters button (campaign, imported file, owner, status) with removable chips; paging up to 200. States: loading, no chats yet, couldn't load, no match.
+- **Chat:** the header shows only the name and "AI is answering / You're answering"; campaign-start dividers; internal notes in the timeline; the AI's "skipped" card with Reply myself and Let the AI try again. **Details** is a slide-over, closed by default at every width: who has the chat (AI assistant, a person or nobody), Resolve and Reopen (with Undo), the number and whether it is linked, the campaigns that messaged them, Open in Contacts.
+- **Take over / Hand back:** while the AI owns the chat the reply box is blurred with a centred Take over, which stops the AI at once (the AI checks the owner before it writes and again before it sends); the header then offers Hand back to AI.
+- **Reply box:** one box (Reply/Note, B/I/S/mono, Fill-in from the person, Saved replies, Send, a Preview line, up to five pasted pictures). It uses the New campaign message box's helpers (`lib/new-campaign.ts`). Fill-ins come from the person (name, first name, phone, email, saved columns); Send waits while the preview shows a blank or unknown fill-in.
+- **API:** `GET /inbox`, `GET /inbox/filters`, `GET /conversations/:id/person`; messages now carry `campaignId` / `campaignName`.
+- **Not built (deferred):** AI labels, the one-line summary, label correction, the "What reply do you expect?" field, AI usage limits. The "who is viewing / typing" line and the participants controls are no longer on screen (the API and the heartbeat still work).
+- **Tests:** `tests/integration/inbox-list.test.ts`, `apps/web/lib/inbox-format.test.ts`; the Playwright inbox specs follow the new screen.
+
 ### 2026-11-02 — redesign: New campaign, on `redesign/new-campaign-build`
 The New campaign screen (`/broadcast/new`) in the new look, built end to end from the design at https://claude.ai/artifact/RTMbhZikmVend1Qf7TKNVx (v20). **This one needed the backend**, so the API, the database and the engine changed too.
 - **Screen:** three steps on the left (Message, Who gets it, Send from) and a sticky review on the right. The review shows the message as a real recipient gets it in a WhatsApp-style preview (arrows step through real people), the campaign name, who it goes to, how many it reaches, how many are skipped and why, how long it takes and when it ends (quiet hours counted), the "messaged recently" choice and a ready checklist. Under it a table lists every fill-in with the column's name in the file, an example from the previewed person and how many have it.
