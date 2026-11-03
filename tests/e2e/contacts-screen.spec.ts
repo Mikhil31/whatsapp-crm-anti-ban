@@ -65,7 +65,10 @@ test.describe('contacts screen', () => {
     // The new tag shows on the left with exactly those 6; Undo takes it off exactly them.
     await page.getByRole('button', { name: new RegExp(`^${own}`) }).click();
     await expect(page.getByText('Showing 1–6 of 6 people')).toBeVisible();
+    // Filters stay when the source changes, so clear the email filter to see the whole file.
+    await page.locator('.ct-chips').getByRole('button', { name: 'Clear all' }).click();
     await page.getByRole('button', { name: new RegExp(`^${tag}.csv`) }).click();
+    await expect(page.getByText('Showing 1–12 of 12 people')).toBeVisible();
     await page.getByLabel('Select everyone on this page').check();
     await page.getByRole('button', { name: 'Add tag' }).click();
     await page.getByLabel('Find a tag, or type a new name').fill(own);
@@ -112,6 +115,10 @@ test.describe('contacts screen', () => {
     await expect(page).toHaveURL(/list=/);
     await expect(page.getByRole('button', { name: 'Remove Email: has one' })).toBeVisible();
 
+    // A saved list is a filter, not a file: it shows everyone it matches. Go back to the file to find the person.
+    await page.locator('.ct-chips').getByRole('button', { name: 'Clear all' }).click();
+    await page.getByRole('button', { name: new RegExp(`^${tag}.csv`) }).click();
+    await expect(page.getByText('Showing 1–6 of 6 people')).toBeVisible();
     // Open a person: the source file with every column, and Open chat (disabled: nobody has written yet).
     await page.getByRole('button', { name: new RegExp(`${tag} Person 01`) }).click();
     const panel = page.getByRole('dialog', { name: /Person 01/ });
