@@ -414,6 +414,8 @@ a draft being edited (Edit opens it with its values, Save changes changes the sa
 so a spec needs a person in its tag first. The date and estimate wording has unit tests in `apps/web/lib/campaign-time.test.ts`, and the
 New campaign wording, fill-in checks, months and finish estimate in `apps/web/lib/new-campaign.test.ts` (`npm test`).
 
+`tests/e2e/contacts-screen.spec.ts` covers the Contacts screen (each run imports its own file, so it can count exactly): a file as a source, search, Filters with a live count and a chip, Select all and Add tag with Create tag and Undo, deleting a tag of your own (the file's own tag has no delete), Save as a list and opening it, Columns, and the person panel. The controls the design has no place for (do-not-contact switch, defining saved columns) are exercised at `/contacts/classic`. The screen's rules (what a filter control means, chips, the address, dates) have unit tests in `apps/web/lib/contacts-screen.test.ts`; the API and the SQL rules in `tests/integration/contacts-screen.test.ts` (the filters, paging and total, "Select all N" tagging exactly the filtered set, bound parameters, the file's tag refusing delete, export with the same filter).
+
 **Trying the New campaign screen on its own database.** The shared dev database may be behind this branch's migrations, and the
 API of another checkout does not have the new routes. For a look without touching them: create a database next to the dev one
 (`docker exec <db container> createdb -U dev whatsapp_crm_nc`), run `packages/db/src/migrate.ts` with `DATABASE_URL` pointing at it,
