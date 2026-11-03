@@ -132,7 +132,7 @@ export {
 } from './ingestion.js';
 
 export {
-  campaignProgress, previewAudience, snapshotAudience, dispatchCampaign, fillInReport,
+  campaignProgress, previewAudience, snapshotAudience, dispatchCampaign, fillInReport, sampleText,
   reconcileCampaign,
   type CampaignProgress, type AudiencePreview, type FillInReport, type FillInReportField, type FillInAudience
 } from './campaigns.js';

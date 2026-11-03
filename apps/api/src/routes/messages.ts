@@ -817,6 +817,7 @@ export function messagesRouter(
                m.body_enc AS "bodyEnc", m.sent_by AS "sentBy",
                m.sent_by_user_id AS "sentByUserId", u.display_name AS "sentByName",
                m.created_at AS "createdAt", m.sent_at AS "sentAt", m.read_at AS "readAt",
+               m.campaign_id AS "campaignId", ca.name AS "campaignName",
                m.media_id AS "mediaId", ma.content_type AS "mediaContentType",
                ma.size_bytes AS "mediaSizeBytes", ma.filename AS "mediaFilename",
                m.media_error AS "mediaError"
@@ -824,6 +825,7 @@ export function messagesRouter(
         JOIN conversation v ON v.id = m.conversation_id
         LEFT JOIN media_asset ma ON ma.id = m.media_id
         LEFT JOIN app_user u ON u.id = m.sent_by_user_id
+        LEFT JOIN campaign ca ON ca.id = m.campaign_id
         WHERE v.id = ${conversationId} AND v.org_id = ${orgId}
         ORDER BY m.created_at ASC
         LIMIT 500`);
