@@ -82,9 +82,10 @@ export function inboxRouter(kms: KmsDriver): Router {
       (NOT ${IS_AI} AND lm.direction = 'inbound')
       OR (${IS_AI} AND ((ar.outcome = 'blocked' AND ar.reason IN ('do_not_contact', 'daily_cap'))
                        OR ar.outcome = 'failed' OR (ar.outcome = 'skipped' AND ar.reason = 'empty_answer')))))`;
+  /** The last activity is the latest message either way (GREATEST skips a missing side); a chat with none yet counts from when it was made. */
   const COLUMNS = sql`
     v.id, v.status, v.unread_count AS "unreadCount",
-    GREATEST(COALESCE(v.last_inbound_at, v.created_at), COALESCE(v.last_outbound_at, v.created_at)) AS "lastAt",
+    COALESCE(GREATEST(v.last_inbound_at, v.last_outbound_at), v.created_at) AS "lastAt",
     v.assignee_user_id AS "assigneeUserId", au.display_name AS "assigneeName", ${IS_AI} AS "isAi",
     c.id AS "contactId", c.display_name AS "contactName", c.do_not_contact AS "doNotContact",
     (SELECT ci.value_normalized FROM contact_identity ci
@@ -151,7 +152,7 @@ export function inboxRouter(kms: KmsDriver): Router {
         AND ir.import_run_id IN (${sql.join(files.map((id) => sql`${id}::uuid`), sql`, `)}))`);
     }
     const where = sql.join(conds, sql` AND `);
-    const ORDER = sql`ORDER BY GREATEST(COALESCE(v.last_inbound_at, v.created_at), COALESCE(v.last_outbound_at, v.created_at)) DESC, v.id`;
+    const ORDER = sql`ORDER BY COALESCE(GREATEST(v.last_inbound_at, v.last_outbound_at), v.created_at) DESC, v.id`;
     const chosen = viewCondition(view);
 
     const out = await req.tenant!(async (tx) => {
