@@ -164,9 +164,12 @@ test.describe('two roles on one chat: admin and agent', () => {
     await test.step('presence: each person sees the other viewing', async () => {
       await page.goto(`/inbox/${conv}`);
       await second.page.goto(`/inbox/${conv}`);
-      // Heartbeat every 12 s plus the inbox's 5 s refresh, so allow a few cycles.
-      await expect(page.getByText(new RegExp(`${AGENT_NAME}.*viewing`))).toBeVisible({ timeout: 45_000 });
-      await expect(second.page.getByText(new RegExp(`${adminName}.*viewing`))).toBeVisible({ timeout: 45_000 });
+      // The Inbox no longer prints who is viewing, but the heartbeat still runs and the API still says who has the chat open
+      // (every 12 s, so allow a few cycles).
+      const viewers = async (who: typeof admin): Promise<string[]> =>
+        ((await who.call('GET', `/conversations/${conv}`)).json.data as { viewers: Array<{ name: string }> }).viewers.map((v) => v.name);
+      await expect.poll(() => viewers(admin), { timeout: 45_000, intervals: [3_000] }).toContain(AGENT_NAME);
+      await expect.poll(() => viewers(agent), { timeout: 45_000, intervals: [3_000] }).toContain(adminName);
     });
 
     // ── 4 · assignment and the lock ───────────────────────────────────────────────────
@@ -233,12 +236,14 @@ test.describe('two roles on one chat: admin and agent', () => {
     });
 
     await test.step('typing: each person sees the other typing', async () => {
-      // The agent drafts a reply: the admin's open thread says so within a poll or two.
+      // The Inbox no longer prints who is typing, but the API still reports it on the chat.
+      const typing = async (who: typeof admin): Promise<string[]> =>
+        ((await who.call('GET', `/conversations/${conv}`)).json.data as { viewers: Array<{ name: string; typing: boolean }> }).viewers.filter((v) => v.typing).map((v) => v.name);
       expect((await agent.call('POST', `/conversations/${conv}/typing`)).status).toBe(204);
-      await expect(page.getByText(new RegExp(`${AGENT_NAME} is typing`))).toBeVisible({ timeout: 20_000 });
-      // And the other way round, on the agent's page.
+      await expect.poll(() => typing(admin), { timeout: 20_000, intervals: [1_000] }).toContain(AGENT_NAME);
+      // And the other way round.
       expect((await admin.call('POST', `/conversations/${conv}/typing`)).status).toBe(204);
-      await expect(second.page.getByText(new RegExp(`${adminName} is typing`))).toBeVisible({ timeout: 20_000 });
+      await expect.poll(() => typing(agent), { timeout: 20_000, intervals: [1_000] }).toContain(adminName);
     });
 
     await test.step('collision: a second reply seconds after the first asks "send anyway?"', async () => {
@@ -249,7 +254,7 @@ test.describe('two roles on one chat: admin and agent', () => {
       await expect(replyTab).toBeEnabled({ timeout: 30_000 });
       await replyTab.click();
       const text = `admin answers via the box ${String(Date.now())}`;
-      const box = page.locator('form textarea').first();
+      const box = page.locator('.ib-cbox textarea').first();
       await box.fill(text);
 
       // Now the agent replies; moments later the admin tries to as well.
@@ -263,7 +268,8 @@ test.describe('two roles on one chat: admin and agent', () => {
       await box.press('Enter');
       await expect(page.getByText(/just replied to this chat/)).toBeVisible();
       await page.getByRole('button', { name: 'Send anyway' }).click();
-      await expect(page.getByText(text)).toBeVisible({ timeout: 20_000 });
+      // In the chat as a message (the box and its preview line hold the same words while it is being sent).
+      await expect(page.locator('.ib-m', { hasText: text })).toBeVisible({ timeout: 20_000 });
     });
 
     await test.step('the admin removes the agent; they are locked out again', async () => {
