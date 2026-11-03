@@ -299,12 +299,17 @@ export function tagsText(p: PersonRow): string {
   return names.slice(0, 2).join(', ') + (names.length > 2 ? ` +${String(names.length - 2)}` : '');
 }
 
+/** A count with thousands separators, in a fixed locale so the server and the browser agree. */
+export function fmt(n: number): string {
+  return new Intl.NumberFormat('en-GB').format(n);
+}
+
 /** "Showing 1–50 of 530 people". */
 export function showingText(page: number, size: number, total: number): string {
   if (total === 0) return '0 people';
   const a = page * size + 1;
   const b = Math.min(total, (page + 1) * size);
-  return `Showing ${String(a)}–${String(b)} of ${String(total)} ${total === 1 ? 'person' : 'people'}`;
+  return `Showing ${fmt(a)}–${fmt(b)} of ${fmt(total)} ${total === 1 ? 'person' : 'people'}`;
 }
 
 /** How many pages there are (at least one). */

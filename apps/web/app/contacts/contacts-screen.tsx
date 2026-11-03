@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Plus, X } from 'lucide-react';
 import type { ContactSources, PersonDetail, PersonRow, SegmentDefinition } from '@/lib/crm';
 import {
-  EVERYONE, PAGE_SIZES, addedText, peopleParams, chipsFor, cleanFilter, deleteTagText, emailOf, filterCount, formatDay,
+  EVERYONE, PAGE_SIZES, addedText, fmt, peopleParams, chipsFor, cleanFilter, deleteTagText, emailOf, filterCount, formatDay,
   pageCount, phoneOf, showingText, sourceLabel, subheading, tagsText, viewToRequest, viewToSearch, withoutChip,
   type Source, type ViewState
 } from '@/lib/contacts-screen';
@@ -313,7 +313,7 @@ export function ContactsScreen(props: ContactsScreenProps) {
               <div className="ct-sbox">
                 <label htmlFor="ct-q">Search</label>
                 <input ref={searchRef} className="ct-in" id="ct-q" type="search" placeholder="Name, phone or email"
-                  autoComplete="off" value={qText} onChange={(e) => { setQText(e.target.value); }} />
+                  autoComplete="off" spellCheck={false} name="q" value={qText} onChange={(e) => { setQText(e.target.value); }} />
                 <kbd aria-hidden>/</kbd>
               </div>
               <button className="ct-btn" type="button" id="ct-fbtn" aria-expanded={filtersOpen} aria-controls="ct-fpanel"
@@ -537,7 +537,7 @@ function SourceList(
       )}
     </div>
   );
-  const people = (n: number): string => `${String(n)} ${n === 1 ? 'person' : 'people'}`;
+  const people = (n: number): string => `${fmt(n)} ${n === 1 ? 'person' : 'people'}`;
   const [name, setName] = useState('');
   return (
     <>
@@ -581,10 +581,10 @@ function BulkBar(
   const exact = tags.some((t) => t.name.toLowerCase() === ql);
   return (
     <div className="ct-bulk" role="region" aria-label="Selected people">
-      <span><b>{picked}</b> selected{everyone ? ' (everyone who matches)' : ''}</span>
+      <span><b>{fmt(picked)}</b> selected{everyone ? ' (everyone who matches)' : ''}</span>
       {!everyone && pageAllTicked && total > picked && (
         <button type="button" className="ct-btn ct-sm ct-g" style={{ color: 'var(--act)', textDecoration: 'underline' }} onClick={onSelectAll}>
-          Select all {total}
+          Select all {fmt(total)}
         </button>
       )}
       <span className="ct-sp" />
