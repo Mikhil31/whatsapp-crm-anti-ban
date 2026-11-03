@@ -45,11 +45,10 @@ export default async function ThreadPage({ params }: { params: Promise<{ id: str
     );
   }
 
-  // The reply lock, mirrored from the server guard in POST /messages: a chat owned by another person is read-only to me unless I am an
-  // admin or on it. Kept identical to the API so the box never offers a send the server would refuse.
+  // The reply lock, mirrored from the server guard in POST /messages: only the owner or an admin may send. A person on the chat can read it
+  // but not reply. Kept identical to the API so the box never offers a send the server would refuse.
   const lockedByOther = conversation.assigneeUserId !== null
     && conversation.assigneeUserId !== me?.userId
-    && !conversation.participants.some((pt) => pt.userId === me?.userId)
     && me?.role !== 'admin';
 
   // Names the newest message or note, so the chat scrolls down when one arrives.
@@ -77,6 +76,8 @@ export default async function ThreadPage({ params }: { params: Promise<{ id: str
         senderStatus={senderStatus}
         doNotContact={conversation.doNotContact}
         aiNotice={aiNotice}
+        participants={conversation.participants}
+        viewers={conversation.viewers}
         lastKey={newest}
         timeline={failure !== null ? <p role="alert" className="ib-hint ib-bad">{failure}</p> : <Timeline messages={messages} notes={notes} senderLabel={conversation.senderLabel} />}
       />

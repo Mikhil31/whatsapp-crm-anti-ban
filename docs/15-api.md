@@ -211,6 +211,8 @@ All under `/api/v1`, scope `conversations:read`, tenant-scoped.
 | `GET /conversations/:id/person` | The person behind a chat: name, phone, email, `fillIns` (only those with a value), `blankKeys` (saved columns they have no value for), files and campaigns. |
 
 `GET /conversations/:id/messages` now also returns `campaignId` and `campaignName` on each message.
+
+**Who may send.** `POST /messages` and `POST /conversations/:id/attachments` answer 409 `THREAD_ASSIGNED` to a signed-in non-admin who is not the chat's owner (a participant included). Admins and API keys are not bound by it. When the chat has no owner, the first signed-in person to send becomes its owner and the change is audited as a reassignment.
 "Needs you" is an open chat where a person is meant to answer and the customer spoke last, or where the AI is stuck on the last message (blocked, failed or an empty answer).
 
 ## Endpoints added since the first slice (2026-10)

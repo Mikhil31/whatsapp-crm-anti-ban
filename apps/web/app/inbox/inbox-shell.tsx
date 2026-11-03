@@ -123,12 +123,12 @@ export function InboxShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="ib ib-page" data-view={selected === null ? 'list' : 'thread'}>
-      <div className="ib-above">
-        <header className="ib-head">
-          <h1>Inbox</h1>
-          <p>Replies from your campaigns. The AI answers where it can, and you step in where it can&apos;t.</p>
-        </header>
+      <header className="ib-head">
+        <h1>Inbox</h1>
+        <p>Replies from your campaigns. The AI answers where it can, and you step in where it can&apos;t.</p>
+      </header>
 
+      <div className="ib-above">
         <div className="ib-bar">
           <div className="ib-sbox">
             <label htmlFor="ib-q">Search</label>

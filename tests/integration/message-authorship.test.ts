@@ -115,8 +115,9 @@ describe('who sent a message', () => {
       .send({ conversationId: conv, body: 'first' });
     // Two agents answering within seconds is exactly what the collision warning (D-54) holds;
     // this test is about who is named, so the second acknowledges it.
-    const messages = await replyAndList(asSession(agent2Token), { acknowledgeCollision: true });
-    expect(messages.map((m) => m.sentByName)).toEqual(['Agent One', 'Agent Two']);
+    // Only the owner or an admin may send, so the second author is the admin.
+    const messages = await replyAndList(asSession(adminToken), { acknowledgeCollision: true });
+    expect(messages.map((m) => m.sentByName)).toEqual(['Agent One', 'Admin']);
   });
 
   it('leaves an API key’s message without an author', async () => {
