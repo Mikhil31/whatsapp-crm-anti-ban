@@ -71,7 +71,9 @@ export function ContactsScreen(props: ContactsScreenProps) {
   const [dialog, setDialog] = useState<Dialog>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [shown, setShown] = useState<Record<string, boolean>>(() => Object.fromEntries(BUILT_IN.map(([k]) => [k, true])));
-  const [openId, setOpenId] = useState<string | null>(null);
+  // The person is kept as it was when opened, so a reload of the list underneath (a search, a tag added) does not close the panel.
+  const [openRow, setOpenRow] = useState<PersonRow | null>(null);
+  const openId = openRow?.id ?? null;
   const [detail, setDetail] = useState<{ id: string; data: PersonDetail | null; state: 'loading' | 'ready' | 'error' } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const ticket = useRef(0);
@@ -113,6 +115,8 @@ export function ContactsScreen(props: ContactsScreenProps) {
 
   useEffect(() => {
     if (firstLoad.current) { firstLoad.current = false; return; }
+    // The rows on screen belong to the old view: say so at once instead of leaving them clickable until the answer comes.
+    setStatus('loading');
     const t = setTimeout(() => { void reload(view); }, 160);
     return () => { clearTimeout(t); };
     // The view is read through its key so a typed rule does not refetch on every re-render.
@@ -260,8 +264,9 @@ export function ContactsScreen(props: ContactsScreenProps) {
   };
 
   // ---- A person ----
-  const openPerson = (id: string): void => {
-    setOpenId(id);
+  const openPerson = (row: PersonRow): void => {
+    const id = row.id;
+    setOpenRow(row);
     setDetail({ id, data: null, state: 'loading' });
     void (async () => {
       const r = await loadDetailAction(id);
@@ -271,10 +276,10 @@ export function ContactsScreen(props: ContactsScreenProps) {
   };
   const closePerson = (): void => {
     const id = openId;
-    setOpenId(null); setDetail(null);
+    setOpenRow(null); setDetail(null);
     if (id !== null) setTimeout(() => { document.querySelector<HTMLElement>(`[data-open="${id}"]`)?.focus(); }, 0);
   };
-  const person = openId === null ? undefined : rows.find((r) => r.id === openId);
+  const person = openRow ?? undefined;
 
   // ---- What the table shows ----
   const showFileCols = fileColumns.filter((c) => shown[`f:${c}`] === true);
@@ -381,7 +386,7 @@ export function ContactsScreen(props: ContactsScreenProps) {
 
             <div className="ct-frame" aria-busy={status === 'loading'}>
               <div className="ct-tbl">
-                {status === 'loading' && people === null && <Skeleton />}
+                {status === 'loading' && <Skeleton />}
                 {status === 'error' && (
                   <div className="ct-empty" role="alert">
                     <h3>Couldn’t load your contacts</h3>
@@ -389,22 +394,22 @@ export function ContactsScreen(props: ContactsScreenProps) {
                     <button className="ct-btn ct-p" type="button" onClick={() => { void reload(view); }}>Try again</button>
                   </div>
                 )}
-                {status !== 'error' && people !== null && noContactsAtAll && (
+                {status === 'ready' && people !== null && noContactsAtAll && (
                   <div className="ct-empty">
                     <h3>No contacts yet</h3>
                     <p>Import a spreadsheet and your people appear here, ready to tag and message.</p>
                     <Link href="/import" className="ct-btn ct-p">Import people</Link>
                   </div>
                 )}
-                {status !== 'error' && people !== null && !noContactsAtAll && total === 0 && (
+                {status === 'ready' && people !== null && !noContactsAtAll && total === 0 && (
                   <div className="ct-empty">
                     <h3>No people match</h3>
                     <p>Try fewer filters, or clear them all.</p>
                     <button className="ct-btn ct-p" type="button" onClick={clearAll}>Clear all filters</button>
                   </div>
                 )}
-                {status !== 'error' && people !== null && total > 0 && (
-                  <table style={status === 'loading' ? { opacity: 0.6 } : undefined}>
+                {status === 'ready' && people !== null && total > 0 && (
+                  <table>
                     <thead>
                       <tr>
                         <th className="ct-nm">
@@ -425,7 +430,7 @@ export function ContactsScreen(props: ContactsScreenProps) {
                     </thead>
                     <tbody>
                       {rows.map((p) => (
-                        <tr key={p.id} className={`ct-r${isTicked(p.id) ? ' ct-sel' : ''}`} onClick={() => { openPerson(p.id); }}>
+                        <tr key={p.id} className={`ct-r${isTicked(p.id) ? ' ct-sel' : ''}`} onClick={() => { openPerson(p); }}>
                           <td className="ct-nm">
                             <div className="ct-nmc">
                               <label className="ct-cb" onClick={(e) => { e.stopPropagation(); }}>
@@ -433,7 +438,7 @@ export function ContactsScreen(props: ContactsScreenProps) {
                                   onChange={(e) => { tick(p.id, e.target.checked); }} />
                               </label>
                               <button type="button" className="ct-link" data-open={p.id}
-                                onClick={(e) => { e.stopPropagation(); openPerson(p.id); }}>{p.displayName ?? phoneOf(p) ?? 'Unnamed'}</button>
+                                onClick={(e) => { e.stopPropagation(); openPerson(p); }}>{p.displayName ?? phoneOf(p) ?? 'Unnamed'}</button>
                             </div>
                           </td>
                           {visible.map(([k]) => <td key={k}>{cell(k, p, day)}</td>)}
@@ -448,7 +453,7 @@ export function ContactsScreen(props: ContactsScreenProps) {
                 )}
               </div>
               <div className="ct-foot">
-                {status === 'loading' && people === null ? <span>Loading people</span> : (
+                {status === 'loading' ? <span>Loading people</span> : (
                   <>
                     <span>{showingText(view.page, view.size, total)}</span>
                     {total > 0 && (
@@ -474,7 +479,7 @@ export function ContactsScreen(props: ContactsScreenProps) {
 
       {person !== undefined && detail !== null && (
         <PersonPanel person={person} detail={detail.data} state={detail.state} timeZone={timeZone}
-          onClose={closePerson} onRetry={() => { openPerson(person.id); }} />
+          onClose={closePerson} onRetry={() => { openPerson(person); }} />
       )}
 
       {dialog !== null && (

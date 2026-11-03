@@ -67,8 +67,9 @@ test.describe('import, mass tag, individual tag, broadcast', () => {
     await expect(page.getByText(new RegExp(`Added “${massTag}” to ${imported} people`))).toBeVisible();
 
     // 4. Tag one person by hand.
-    await page.getByRole('button', { name: 'Clear' }).click().catch(() => undefined);
-    await page.getByLabel(/^Select /).first().check();
+    // The list reloads after a tag is added; wait for the ticks to clear before picking one person.
+    await expect(page.getByLabel('Select everyone on this page')).not.toBeChecked();
+    await page.getByLabel(/^Select (?!everyone)/).first().check();
     await page.getByRole('button', { name: 'Add tag' }).click();
     await page.getByLabel('Find a tag, or type a new name').fill(handTag);
     await page.locator('.ct-menu').getByRole('button', { name: new RegExp(`^${handTag}`) }).click();

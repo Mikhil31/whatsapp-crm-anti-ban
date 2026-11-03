@@ -3,7 +3,7 @@ import { getMe, getContactSources, listPeople, CrmApiError, NotAuthenticatedErro
 import type { ContactSources, Me, PersonRow } from '@/lib/crm';
 import { campaignZone } from '@/lib/campaign-time';
 import { emptyView, viewFromSearch, viewToRequest } from '@/lib/contacts-screen';
-import { ContactsScreen } from './contacts-screen';
+import { ContactsScreen } from '../contacts-screen';
 
 /** Rendered per request: the people, their counts and the files reflect live data. */
 export const dynamic = 'force-dynamic';

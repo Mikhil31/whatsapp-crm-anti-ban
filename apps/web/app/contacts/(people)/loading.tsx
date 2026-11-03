@@ -1,4 +1,4 @@
-import './contacts.css';
+import '../contacts.css';
 
 /** What shows while Contacts is being read: the heading and seven grey rows, in the table's own frame. */
 export default function Loading() {
