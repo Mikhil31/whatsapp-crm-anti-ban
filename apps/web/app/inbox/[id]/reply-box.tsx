@@ -128,7 +128,7 @@ export function ReplyBox(props: ReplyBoxProps) {
     const t = mb.ref.current;
     if (t === null) return;
     t.style.height = 'auto';
-    t.style.height = `${String(Math.min(t.scrollHeight, 160))}px`;
+    t.style.height = `${String(Math.min(t.scrollHeight, 120))}px`;
   }
   /** Puts a saved reply at the cursor, to be edited if they like. */
   function addSaved(body: string): void {
@@ -224,7 +224,7 @@ export function ReplyBox(props: ReplyBoxProps) {
           ))}
         </div>
       )}
-      <textarea ref={mb.ref} rows={2} value={text} placeholder={placeholder} aria-label={placeholder} maxLength={4096} disabled={pending}
+      <textarea ref={mb.ref} rows={1} value={text} placeholder={placeholder} aria-label={placeholder} maxLength={4096} disabled={pending}
         onChange={(e) => { onChange(e.target.value, e.target.selectionStart); }} onKeyDown={onKeyDown} onPaste={onPaste} />
       {!isNote && pasted.length > 0 && (
         <div className="ib-imgs">
@@ -303,8 +303,8 @@ export function ReplyBox(props: ReplyBoxProps) {
       )}
       {numberDown && (
         <div role="alert" className="ib-hint">
-          <span><b>{senderStatus.label} is not linked, so replies can’t be sent right now.</b> To fix it, open Linked numbers, choose {senderStatus.label} and scan its QR code with the phone. You can still add a note.</span>
-          <Link className="ib-btn ib-sm" href="/link">Link number</Link>
+          <span><b>{senderStatus.label} isn’t linked, so replies can’t be sent.</b> Notes still work.</span>
+          <Link className="ib-btn ib-sm" href="/link">Open Linked numbers</Link>
         </div>
       )}
       {replyLocked && (
