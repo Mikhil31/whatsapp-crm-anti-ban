@@ -39,7 +39,7 @@ export default async function ThreadPage({ params }: { params: Promise<{ id: str
   if (conversation === null) {
     return (
       <div className="ib-empty">
-        <h3>Couldn&apos;t open this chat</h3>
+        <h2>Couldn&apos;t open this chat</h2>
         <p>{failure ?? 'It may have been removed, or you may not have access to it.'}</p>
       </div>
     );

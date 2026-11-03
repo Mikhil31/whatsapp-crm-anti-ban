@@ -132,7 +132,7 @@ export function InboxShell({ children }: { children: ReactNode }) {
         <div className="ib-bar">
           <div className="ib-sbox">
             <label htmlFor="ib-q">Search</label>
-            <input ref={searchRef} className="ib-in" id="ib-q" type="text" value={q} placeholder="Name, number or message" autoComplete="off"
+            <input ref={searchRef} className="ib-in" id="ib-q" name="q" type="text" value={q} placeholder="Name, number or message…" autoComplete="off"
               onChange={(e) => { setQ(e.target.value); }}
               onKeyDown={(e) => { if (e.key === 'Escape' && q !== '') { setQ(''); } }} />
             {q !== '' ? (
@@ -146,7 +146,7 @@ export function InboxShell({ children }: { children: ReactNode }) {
 
         <div id="ib-fpanel" className="ib-card ib-fpanel" hidden={!filtersOpen}>
           <div>
-            <h4>Campaign</h4>
+            <h2>Campaign</h2>
             <div className="ib-stack">
               {choices === null && <span className="ib-small">Loading…</span>}
               {choices !== null && choices.campaigns.length === 0 && <span className="ib-small">No campaign has messaged anyone yet.</span>}
@@ -157,7 +157,7 @@ export function InboxShell({ children }: { children: ReactNode }) {
             </div>
           </div>
           <div>
-            <h4>Imported file</h4>
+            <h2>Imported file</h2>
             <div className="ib-stack">
               {choices === null && <span className="ib-small">Loading…</span>}
               {choices !== null && choices.files.length === 0 && <span className="ib-small">No imported file has a chat yet.</span>}
@@ -168,7 +168,7 @@ export function InboxShell({ children }: { children: ReactNode }) {
             </div>
           </div>
           <div>
-            <h4>Owner</h4>
+            <h2>Owner</h2>
             <div className="ib-seg" role="group" aria-label="Owner">
               {([['all', 'All'], ['me', 'Mine'], ['unassigned', 'Unassigned']] as const).map(([k, label]) => (
                 <button key={k} type="button" aria-pressed={owner === k} onClick={() => { setOwner(k); setLimit(PAGE); }}>{label}</button>
@@ -176,7 +176,7 @@ export function InboxShell({ children }: { children: ReactNode }) {
             </div>
           </div>
           <div>
-            <h4>Status</h4>
+            <h2>Status</h2>
             <div className="ib-seg" role="group" aria-label="Status">
               {([['open', 'Open'], ['closed', 'Closed'], ['any', 'Any']] as const).map(([k, label]) => (
                 <button key={k} type="button" aria-pressed={status === k} onClick={() => { setStatus(k); setLimit(PAGE); }}>{label}</button>
@@ -207,28 +207,28 @@ export function InboxShell({ children }: { children: ReactNode }) {
 
       <div className="ib-split" data-view={selected === null ? 'list' : 'thread'}>
         <section className="ib-listpane" aria-label="Chats">
-          <div className="ib-lhead">{page === null ? (failed ? '' : 'Loading chats') : noChatsAtAll ? '0 chats' : `${page.total.toLocaleString('en-US')} ${page.total === 1 ? 'chat' : 'chats'}`}</div>
+          <div className="ib-lhead">{page === null ? (failed ? '' : 'Loading chats…') : noChatsAtAll ? '0 chats' : `${page.total.toLocaleString('en-US')} ${page.total === 1 ? 'chat' : 'chats'}`}</div>
           <div className="ib-rows">
             {page === null && !failed && [1, 2, 3, 4, 5, 6].map((n) => (
               <div key={n} className="ib-sk" aria-hidden="true"><i className="ib-a" /><div className="ib-l"><i style={{ width: '55%' }} /><i style={{ width: '90%' }} /><i style={{ width: '40%' }} /></div></div>
             ))}
             {page === null && failed && (
               <div className="ib-empty">
-                <h3>Couldn&apos;t load your chats</h3>
+                <h2>Couldn&apos;t load your chats</h2>
                 <p>The server did not answer. Nothing was lost.</p>
                 <button className="ib-btn ib-p" type="button" onClick={() => { void load(); }}>Try again</button>
               </div>
             )}
             {noChatsAtAll && (
               <div className="ib-empty">
-                <h3>No chats yet</h3>
+                <h2>No chats yet</h2>
                 <p>Replies to your campaigns show up here.</p>
                 <Link className="ib-btn ib-p" href="/broadcast/new">Create a campaign</Link>
               </div>
             )}
             {loadedOk && rows.length === 0 && (
               <div className="ib-empty">
-                <h3>No chats match your filters</h3>
+                <h2>No chats match your filters</h2>
                 <p>Try fewer filters, or clear them all.</p>
                 <button className="ib-btn ib-p" type="button" onClick={clearAll}>Clear all filters</button>
               </div>

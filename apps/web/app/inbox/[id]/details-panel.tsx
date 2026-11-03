@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useEffect, useRef } from 'react';
 import { initials } from '@/lib/inbox-format';
 import type { OrgUser } from '@/lib/crm';
 import type { ChatPerson } from '@/lib/inbox';
@@ -29,10 +30,18 @@ export function DetailsPanel(props: {
   const bot = props.users.find((u) => u.isBot) ?? null;
   const people = props.users.filter((u) => !u.isBot);
   const campaigns = props.person?.campaigns ?? [];
+  const closeBtn = useRef<HTMLButtonElement>(null);
+  // The slide-over is not modal, but opening it moves the keyboard to it so Close is the first stop.
+  useEffect(() => {
+    if (!props.open) return;
+    // The panel is still `visibility: hidden` for the first instant of its slide, and a hidden control cannot take focus.
+    const t = setTimeout(() => { closeBtn.current?.focus(); }, 60);
+    return () => { clearTimeout(t); };
+  }, [props.open]);
 
   return (
     <aside className={`ib-info${props.open ? ' ib-open' : ''}`} aria-label="About this person" aria-hidden={!props.open}>
-      <button className="ib-btn ib-g ib-sm ib-close" type="button" onClick={props.onClose}>Close</button>
+      <button ref={closeBtn} className="ib-btn ib-g ib-sm ib-close" type="button" onClick={props.onClose}>Close</button>
       <div className="ib-who">
         <span className="ib-av" aria-hidden="true">{initials(props.title)}</span>
         <b style={{ fontSize: 16 }}>{props.title}</b>
@@ -46,7 +55,7 @@ export function DetailsPanel(props: {
       </div>
 
       <div>
-        <h4>Who has this chat</h4>
+        <h2>Who has this chat</h2>
         <select className="ib-select" aria-label="Who has this chat" value={props.assigneeUserId ?? ''} disabled={props.busy}
           onChange={(e) => { props.onOwner(e.target.value); }}>
           {bot !== null && <option value={bot.id}>AI assistant</option>}
@@ -57,7 +66,7 @@ export function DetailsPanel(props: {
       </div>
 
       <div>
-        <h4>Status</h4>
+        <h2>Status</h2>
         <button className="ib-btn" type="button" style={{ width: '100%' }} disabled={props.busy} onClick={props.onStatus}>
           {props.status === 'open' ? 'Resolve this chat' : 'Reopen this chat'}
         </button>
@@ -67,7 +76,7 @@ export function DetailsPanel(props: {
       </div>
 
       <div>
-        <h4>Campaigns</h4>
+        <h2>Campaigns</h2>
         {campaigns.length === 0 && <p className="ib-small">No campaign has messaged them in this chat.</p>}
         {campaigns.map((c) => (
           <div key={c.id} className="ib-crow">

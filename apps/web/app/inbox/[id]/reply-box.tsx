@@ -231,7 +231,7 @@ export function ReplyBox(props: ReplyBoxProps) {
     }
   }
 
-  const placeholder = isNote ? 'Write a note for your team. Only they see it.' : `Message ${first}. You can paste a picture here too.`;
+  const placeholder = isNote ? 'Write a note for your team… Only they see it.' : `Message ${first}… You can paste a picture here too.`;
   const gated = aiOwned && !isNote;
 
   const editor = (

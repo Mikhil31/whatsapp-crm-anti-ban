@@ -2,7 +2,7 @@
 export default function NoThreadSelected() {
   return (
     <div className="ib-empty">
-      <h3>Pick a chat</h3>
+      <h2>Pick a chat</h2>
       <p>Choose one on the left to read it and reply.</p>
     </div>
   );

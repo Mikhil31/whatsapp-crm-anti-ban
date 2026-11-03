@@ -29,7 +29,11 @@
 .ib-btn.ib-p { background: var(--ac); border-color: var(--ac); color: var(--aci); }
 .ib-btn.ib-sm { padding: 0 12px; font-size: 14px; }
 .ib-btn.ib-g { border-color: transparent; background: transparent; color: var(--mu); }
+.ib-btn:hover:not(:disabled) { background: var(--sf2); }
+.ib-btn.ib-p:hover:not(:disabled) { background: var(--ac); filter: brightness(1.08); }
 .ib-btn:disabled { opacity: .5; cursor: not-allowed; }
+.ib button, .ib a, .ib select, .ib label { touch-action: manipulation; }
+.ib-rows, .ib-msgs, .ib-info, .ib-menu, .ib-stack { overscroll-behavior: contain; }
 .ib-seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--ln); border-radius: var(--r); background: var(--sf2); padding: 3px; gap: 2px; }
 .ib-seg button { min-height: 44px; padding: 0 14px; border: 0; border-radius: 8px; background: transparent; color: var(--mu); font-weight: 500; cursor: pointer; }
 .ib-seg button[aria-pressed="true"] { background: var(--sf); color: var(--act); box-shadow: 0 1px 2px rgba(20, 21, 42, .12); }
@@ -70,7 +74,7 @@ mark.ib-mark { background: var(--wns); color: inherit; border-radius: 3px; paddi
 .ib-card { background: var(--sf); border: 1px solid var(--ln); border-radius: var(--r); }
 .ib-fpanel { padding: 16px 18px; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px 22px; }
 .ib-fpanel[hidden] { display: none; }
-.ib-fpanel h4 { margin: 0 0 8px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--mu); font-weight: 600; }
+.ib-fpanel h2 { margin: 0 0 8px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--mu); font-weight: 600; }
 .ib-stack { display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow-y: auto; }
 .ib-chk { display: flex; align-items: center; gap: 10px; min-height: 44px; cursor: pointer; font-size: 14px; }
 .ib-chk input { width: 18px; height: 18px; accent-color: var(--ac); flex: none; }
@@ -83,6 +87,7 @@ mark.ib-mark { background: var(--wns); color: inherit; border-radius: 3px; paddi
 .ib-lhead { padding: 10px 14px; border-bottom: 1px solid var(--ln); font-size: 13px; color: var(--mu); }
 .ib-rows { overflow-y: auto; flex: 1; min-height: 0; }
 .ib-row { display: flex; gap: 12px; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--ln); background: transparent; padding: 12px 14px; cursor: pointer; align-items: flex-start; min-height: 44px; text-decoration: none; color: inherit; }
+.ib-row { content-visibility: auto; contain-intrinsic-size: auto 84px; }
 .ib-row:hover { background: var(--sf2); }
 .ib-row[aria-current="true"] { background: var(--acs); }
 .ib-rb { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
@@ -163,7 +168,7 @@ mark.ib-mark { background: var(--wns); color: inherit; border-radius: 3px; paddi
 .ib-info { border-left: 1px solid var(--ln); overflow-y: auto; min-height: 0; padding: 16px; display: flex; flex-direction: column; gap: 14px; background: var(--sf); position: absolute; right: 0; top: 0; bottom: 0; width: min(340px, 100%); box-shadow: -8px 0 24px rgba(20, 21, 42, .16); transform: translateX(100%); visibility: hidden; z-index: 5; }
 .ib-info.ib-open { transform: none; visibility: visible; }
 @media (prefers-reduced-motion: no-preference) { .ib-info { transition: transform .2s ease-out, visibility .2s; } }
-.ib-info h4 { margin: 0 0 6px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--mu); font-weight: 600; }
+.ib-info h2 { margin: 0 0 6px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--mu); font-weight: 600; }
 .ib-info .ib-close { align-self: flex-end; }
 .ib-who { display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; }
 .ib-who .ib-av { width: 56px; height: 56px; font-size: 19px; margin-bottom: 6px; }
@@ -173,7 +178,7 @@ mark.ib-mark { background: var(--wns); color: inherit; border-radius: 3px; paddi
 
 /* empty, loading, couldn't load */
 .ib-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; padding: 40px 24px; flex: 1; color: var(--mu); }
-.ib-empty h3 { margin: 0; color: var(--ink); font-size: 17px; font-weight: 600; }
+.ib-empty h2 { margin: 0; color: var(--ink); font-size: 17px; font-weight: 600; }
 .ib-sk { display: flex; gap: 12px; padding: 14px; border-bottom: 1px solid var(--ln); }
 .ib-sk i { display: block; border-radius: 6px; background: var(--sf2); }
 .ib-sk .ib-a { width: 36px; height: 36px; border-radius: 50%; flex: none; }

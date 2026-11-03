@@ -41,7 +41,7 @@ test.describe('seeded pages', () => {
     await expect(page.getByText('unread thread — are you open tomorrow?').first()).toBeVisible();
     await page.getByRole('button', { name: 'Note', exact: true }).click();
     const note = `e2e note ${String(Date.now())}`;
-    await page.getByPlaceholder('Write a note for your team. Only they see it.').fill(note);
+    await page.getByPlaceholder(/^Write a note for your team/).fill(note);
     await page.getByRole('button', { name: 'Add note' }).click();
     await expect(page.getByText(note)).toBeVisible();
 
