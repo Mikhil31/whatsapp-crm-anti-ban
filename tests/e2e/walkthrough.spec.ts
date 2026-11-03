@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { signIn, nav, openDetails, CREDS_MISSING } from './helpers';
+import { signIn, nav, CREDS_MISSING } from './helpers';
 
 /**
  * The main pages render for a signed-in operator, and the segment builder's live count works — the
