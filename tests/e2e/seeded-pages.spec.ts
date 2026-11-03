@@ -58,8 +58,7 @@ test.describe('seeded pages', () => {
   test('[R-009] contacts: search narrows the list', async ({ page }) => {
     await signIn(page);
     await page.goto('/contacts');
-    await page.getByLabel('Search contacts').fill('Farhan');
-    await page.keyboard.press('Enter');
+    await page.getByLabel('Search', { exact: true }).fill('Farhan');
     await expect(page).toHaveURL(/q=Farhan/);
     await expect(page.getByText('Farhan Ali').first()).toBeVisible();
     await expect(page.getByText('Gita Iyer')).toHaveCount(0);
