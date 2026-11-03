@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { getMe, getContactSources, listPeople, CrmApiError, NotAuthenticatedError } from '@/lib/crm';
+import { getMe, getContactSources, listPeople, NotAuthenticatedError } from '@/lib/crm';
 import type { ContactSources, Me, PersonRow } from '@/lib/crm';
 import { campaignZone } from '@/lib/campaign-time';
 import { emptyView, viewFromSearch, viewToRequest } from '@/lib/contacts-screen';
@@ -24,8 +24,8 @@ export default async function ContactsPage(
   try {
     [sources, me] = await Promise.all([getContactSources(), getMe().catch((): null => null)]);
   } catch (error) {
+    // Anything but a lapsed session (the API refusing, or not answering at all) shows the screen's own "Couldn't load" state.
     if (error instanceof NotAuthenticatedError) expired = true;
-    else if (!(error instanceof CrmApiError)) throw error;
   }
   if (expired) redirect('/login?next=/contacts');
 
@@ -36,7 +36,6 @@ export default async function ContactsPage(
       people = await listPeople(viewToRequest(view));
     } catch (error) {
       if (error instanceof NotAuthenticatedError) redirect('/login?next=/contacts');
-      if (!(error instanceof CrmApiError)) throw error;
     }
   }
 
