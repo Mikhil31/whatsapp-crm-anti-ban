@@ -106,6 +106,7 @@ mark.ib-mark { background: var(--wns); color: inherit; border-radius: 3px; paddi
 .ib-th-head { display: flex; gap: 12px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--ln); flex-wrap: wrap; }
 .ib-th-id { flex: 1 1 180px; min-width: 0; display: flex; flex-direction: column; }
 .ib-th-id b { font-weight: 600; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ib-viewers { font-size: 12px; font-weight: 500; color: var(--act); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ib-th-act { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .ib-msgs { flex: 1; overflow-y: auto; min-height: 0; padding: 14px 16px; background: var(--cv); }
 .ib-feed { display: flex; flex-direction: column; gap: 8px; }
@@ -172,6 +173,9 @@ mark.ib-mark { background: var(--wns); color: inherit; border-radius: 3px; paddi
 .ib-info .ib-close { align-self: flex-end; }
 .ib-who { display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; }
 .ib-who .ib-av { width: 56px; height: 56px; font-size: 19px; margin-bottom: 6px; }
+.ib-people { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ib-person { display: inline-flex; align-items: center; gap: 2px; min-height: 36px; padding: 0 4px 0 12px; border-radius: 999px; background: var(--sf2); font-size: 13px; }
+.ib-person button { width: 36px; height: 36px; border: 0; border-radius: 50%; background: transparent; cursor: pointer; color: var(--mu); }
 .ib-crow { display: flex; flex-direction: column; gap: 2px; padding: 8px 0; border-top: 1px solid var(--ln); font-size: 14px; }
 .ib-crow:first-of-type { border-top: 0; }
 .ib-select { width: 100%; min-height: 44px; border-radius: var(--r); border: 1px solid var(--edge); background: var(--sf); padding: 0 10px; }
@@ -197,7 +201,7 @@ mark.ib-mark { background: var(--wns); color: inherit; border-radius: 3px; paddi
   .ib-split { display: block; height: calc(100dvh - 330px); min-height: 440px; }
   .ib-split[data-view="list"] .ib-thread { display: none; }
   .ib-split[data-view="thread"] .ib-listpane { display: none; }
-  .ib-split[data-view="thread"] { height: calc(100dvh - 130px); }
+  .ib-split[data-view="thread"] { height: calc(100dvh - 250px); min-height: 480px; }
   .ib-listpane, .ib-thread { height: 100%; }
   .ib-listpane { border-right: 0; }
   .ib-back { display: inline-flex; }

@@ -24,12 +24,18 @@ export function DetailsPanel(props: {
   isAi: boolean;
   status: string;
   busy: boolean;
+  /** The other people on the chat. They can read it and see who is here; only the owner or an admin can reply. */
+  participants: Array<{ userId: string; name: string }>;
+  isAdmin: boolean;
+  onParticipant: (userId: string, present: boolean) => void;
   onOwner: (userId: string) => void;
   onStatus: () => void;
 }) {
   const bot = props.users.find((u) => u.isBot) ?? null;
   const people = props.users.filter((u) => !u.isBot);
   const campaigns = props.person?.campaigns ?? [];
+  const onChat = new Set(props.participants.map((pt) => pt.userId));
+  const addable = people.filter((u) => u.id !== props.assigneeUserId && !onChat.has(u.id));
   const closeBtn = useRef<HTMLButtonElement>(null);
   // The slide-over is not modal, but opening it moves the keyboard to it so Close is the first stop.
   useEffect(() => {
@@ -63,6 +69,26 @@ export function DetailsPanel(props: {
           <option value="">Unassigned</option>
         </select>
         <p className="ib-small" style={{ marginTop: 4 }}>{props.isAi ? 'The AI assistant answers replies here, using the campaign’s instructions.' : 'Only your team answers here.'}</p>
+      </div>
+
+      <div>
+        <h2>Also on this chat</h2>
+        <div className="ib-people">
+          {props.participants.length === 0 && <span className="ib-small">Nobody else.</span>}
+          {props.participants.map((pt) => (
+            <span key={pt.userId} className="ib-person">{pt.name}
+              {props.isAdmin && <button type="button" aria-label={`Take ${pt.name} off this chat`} disabled={props.busy} onClick={() => { props.onParticipant(pt.userId, false); }}>×</button>}
+            </span>
+          ))}
+        </div>
+        {props.isAdmin && addable.length > 0 && (
+          <select className="ib-select" style={{ marginTop: 8 }} aria-label="Add someone to this chat" value="" disabled={props.busy}
+            onChange={(e) => { if (e.target.value !== '') props.onParticipant(e.target.value, true); }}>
+            <option value="">Add someone…</option>
+            {addable.map((u) => <option key={u.id} value={u.id}>{u.displayName}</option>)}
+          </select>
+        )}
+        <p className="ib-small" style={{ marginTop: 4 }}>They can read this chat and see who is here. Only the owner or an admin can reply.</p>
       </div>
 
       <div>

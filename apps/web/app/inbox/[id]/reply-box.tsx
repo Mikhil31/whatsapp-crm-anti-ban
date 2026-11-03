@@ -293,6 +293,9 @@ export function ReplyBox(props: ReplyBoxProps) {
           <button type="button" aria-pressed={!isNote} disabled={replyOff} onClick={() => { setTab('reply'); setMenu(null); }}>Reply</button>
           <button type="button" aria-pressed={isNote} onClick={() => { setTab('note'); setMenu(null); }}>Note</button>
         </div>
+        {senderStatus !== null && (
+          <span className="ib-small">Sending from {senderStatus.label} · <span className={`ib-st ${senderStatus.canSend ? 'ib-ok' : 'ib-bd'}`}><i />{senderStatus.canSend ? 'Linked' : 'Not linked'}</span></span>
+        )}
       </div>
 
       {error !== null && <p role="alert" className="ib-err">{error}</p>}
@@ -335,12 +338,12 @@ export function ReplyBox(props: ReplyBoxProps) {
       )}
       {numberDown && (
         <div role="alert" className="ib-hint">
-          <span><b>{senderStatus.label} is not linked.</b> A reply would not be sent. You can still add a note.</span>
+          <span><b>{senderStatus.label} is not linked, so replies can’t be sent right now.</b> To fix it, open Linked numbers, choose {senderStatus.label} and scan its QR code with the phone. You can still add a note.</span>
           <Link className="ib-btn ib-sm" href="/link">Link number</Link>
         </div>
       )}
       {replyLocked && (
-        <div className="ib-hint"><span><b>{lockedBy ?? 'Another colleague'}</b> has this chat. Take it yourself, or ask an admin, to reply. You can still add a note.</span></div>
+        <div className="ib-hint"><span><b>{lockedBy ?? 'Another colleague'}</b> has this chat, and only the owner or an admin can reply. You can read it and add a note. To reply yourself, ask an admin to give you the chat.</span></div>
       )}
 
       {gated ? (

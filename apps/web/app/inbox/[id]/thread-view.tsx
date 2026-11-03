@@ -5,16 +5,17 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 import type { ReactNode } from 'react';
 import { ChevronLeft } from 'lucide-react';
-import { updateThread } from '@/app/actions';
+import { setParticipant, updateThread } from '@/app/actions';
 import { handChatToAiAction, takeChatBackAction } from '@/app/ai/actions';
 import { initials } from '@/lib/inbox-format';
-import type { AiNotice, CannedReply, OrgUser, SenderStatus } from '@/lib/crm';
+import type { AiNotice, CannedReply, OrgUser, SenderStatus, Viewer } from '@/lib/crm';
 import type { ChatPerson } from '@/lib/inbox';
 import { INBOX_CHANGED } from '../inbox-shell';
 import { setOwnerAction } from '../actions';
 import { AiNoticeBanner } from './ai-notice';
 import { DetailsPanel } from './details-panel';
 import { ReplyBox } from './reply-box';
+import { ViewersLine } from './viewers-line';
 
 /** How often an open chat looks for new messages. */
 const REFRESH_MS = 5000;
@@ -38,6 +39,9 @@ export interface ThreadViewProps {
   senderStatus: SenderStatus | null;
   doNotContact: boolean;
   aiNotice: AiNotice | null;
+  /** The other people on the chat beside its owner, and who has it open now. */
+  participants: Array<{ userId: string; name: string }>;
+  viewers: Viewer[];
   /** Changes when a message or note is added, so the chat scrolls to it. */
   lastKey: string;
   timeline: ReactNode;
@@ -150,6 +154,7 @@ export function ThreadView(p: ThreadViewProps) {
         <div className="ib-th-id">
           <b>{p.title}</b>
           <span className={`ib-st ${isAi ? 'ib-ok' : 'ib-rd'}`}><i />{answering}</span>
+          <ViewersLine conversationId={p.conversationId} initial={p.viewers} />
         </div>
         <div className="ib-th-act">
           {!isAi && bot !== null && <button className="ib-btn ib-sm" type="button" disabled={busy} onClick={handBack}>Hand back to AI</button>}
@@ -178,6 +183,8 @@ export function ThreadView(p: ThreadViewProps) {
       <DetailsPanel
         open={details} onClose={() => { setDetails(false); }} title={p.title} phone={p.phone} senderLabel={p.senderLabel} linked={linked}
         person={p.person} users={p.users} assigneeUserId={p.assigneeUserId} isAi={isAi} status={p.status} busy={busy}
+        participants={p.participants} isAdmin={p.isAdmin}
+        onParticipant={(userId, present) => { change(() => setParticipant(p.conversationId, userId, present), present ? 'Added to this chat. They can read it, not reply.' : 'Taken off this chat.'); }}
         onOwner={chooseOwner} onStatus={toggleStatus} />
 
       {toast !== null && (
