@@ -257,11 +257,16 @@ export function inboxRouter(kms: KmsDriver): Router {
       }
       if (person.phone !== null) fillIns.push({ key: 'phone', label: 'Phone', value: person.phone });
       if (person.email !== null) fillIns.push({ key: 'email', label: 'Email', value: person.email });
+      // The columns that exist but this person has no value for: a reply that uses one is shown as "blank", not as a mistyped key.
+      const blankKeys: string[] = [];
+      if (person.phone === null) blankKeys.push('phone');
+      if (person.email === null) blankKeys.push('email');
       for (const d of defs) {
         const v = person.fields?.[d.key];
         if (v !== undefined && v !== null && String(v).trim() !== '') fillIns.push({ key: d.key, label: d.label, value: sampleText(d.type, String(v)) });
+        else blankKeys.push(d.key);
       }
-      return { contactId: person.id, name: person.name, phone: person.phone, email: person.email, fillIns, files, campaigns };
+      return { contactId: person.id, name: person.name, phone: person.phone, email: person.email, fillIns, blankKeys, files, campaigns };
     });
     if (out === null) {
       res.status(404).json(problem(req, 404, 'NOT_FOUND', 'No such conversation.'));
