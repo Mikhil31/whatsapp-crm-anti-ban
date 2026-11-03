@@ -28,11 +28,10 @@ test.describe('signed-in walkthrough', () => {
     // A fresh tag so the run does not depend on existing data.
     const tag = `e2e-${String(Date.now())}`;
     await page.goto('/contacts');
-    await openDetails(page, /^New tag/);
-    await page.getByPlaceholder('New tag name…').fill(tag);
-    await page.getByRole('button', { name: 'Add tag' }).click();
-    // The tag chip's accessible name also carries its contact count, so match by substring.
-    await expect(page.getByRole('link', { name: tag })).toBeVisible();
+    await page.getByRole('button', { name: 'New tag' }).click();
+    await page.getByLabel('New tag name').fill(tag);
+    await page.keyboard.press('Enter');
+    await expect(page.getByText(`Tag “${tag}” created.`)).toBeVisible();
 
     // Build a segment on that tag and preview the count.
     await page.goto('/segments');
