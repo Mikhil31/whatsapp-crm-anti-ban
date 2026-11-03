@@ -114,7 +114,8 @@ export {
 } from './body-variation.js';
 
 export {
-  buildSegmentPredicate, countSegmentMatches, type SegmentDefinition
+  buildSegmentPredicate, segmentCriteria, countSegmentMatches, countSegmentCriteria,
+  type SegmentDefinition, type FieldRule, type FieldRuleOp
 } from './segments.js';
 
 export {
@@ -141,8 +142,8 @@ export {
   type AudienceColumns, type ReviewTarget, type CampaignReview, type ReviewPerson, type BlankPerson, type AudienceHistory
 } from './campaign-review.js';
 export {
-  searchPredicate, resolveTarget, countMatching, bulkTag, bulkUntag, tagImportRun, ensureTag, deleteTag,
-  type TagTarget
+  searchPredicate, resolveTarget, countMatching, bulkTag, bulkTagIds, bulkUntag, tagImportRun, ensureTag, deleteTag, isFileTag,
+  type TagTarget, type ContactFilter
 } from './tagging.js';
 export {
   CUSTOM_FIELD_TYPES, FIELD_KEY, checkFieldValue, validateCustomFields, loadCustomFields,
