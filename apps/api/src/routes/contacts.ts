@@ -256,6 +256,7 @@ export function contactsRouter(defaultCountry: string): Router {
         SELECT ir.id, ir.filename, ir.created_at AS "importedAt", ir.headers, ir.mapping,
                CASE WHEN ir.summary ->> 'tagId' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
                     THEN ir.summary ->> 'tagId' END AS "tagId",
+               (SELECT t.name FROM tag t WHERE t.org_id = ${orgId} AND t.id::text = ir.summary ->> 'tagId') AS "tagName",
                (SELECT count(DISTINCT r.contact_id)::int FROM import_row r
                  JOIN contact c ON c.id = r.contact_id AND c.deleted_at IS NULL
                  WHERE r.import_run_id = ir.id AND r.contact_id IS NOT NULL
@@ -264,7 +265,7 @@ export function contactsRouter(defaultCountry: string): Router {
         WHERE ir.org_id = ${orgId} AND ir.status = 'committed' AND ir.superseded_at IS NULL
         ORDER BY ir.created_at DESC LIMIT 200`)) as unknown as Array<{
           id: string; filename: string | null; importedAt: string; headers: unknown; mapping: unknown;
-          tagId: string | null; count: number;
+          tagId: string | null; tagName: string | null; count: number;
         }>;
       const tags = await tx.execute(sql`
         SELECT t.id, t.name, t.colour,
@@ -284,7 +285,7 @@ export function contactsRouter(defaultCountry: string): Router {
       return {
         total: all[0]?.n ?? 0,
         files: files.map((f) => ({
-          id: f.id, filename: f.filename, importedAt: f.importedAt, count: f.count, tagId: f.tagId,
+          id: f.id, filename: f.filename, importedAt: f.importedAt, count: f.count, tagId: f.tagId, tagName: f.tagName,
           columns: fileColumns(f.headers, f.mapping)
         })),
         tags,
