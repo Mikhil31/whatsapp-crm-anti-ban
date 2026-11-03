@@ -13,7 +13,10 @@ test.describe('contacts: tags', () => {
     const file = `chip-${stamp}`;
     const tag = `own-${stamp}`;
     const n = Number(stamp.slice(-2)) % 45;
-    const csv = `Name,Mob\nChip One,+1202555${String(290 - n).padStart(4, '0')}\n`;
+    // A per-run column keeps the bytes unique: the same file twice is (rightly) refused as already imported.
+    const csv = `Name,Mob,Batch
+Chip One,+1202555${String(290 - n).padStart(4, '0')},${stamp}
+`;
 
     await signIn(page);
     await page.goto('/import');
