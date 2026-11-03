@@ -139,8 +139,10 @@ mark.ib-mark { background: var(--wns); color: inherit; border-radius: 3px; paddi
 .ib-mini button:disabled { opacity: .4; cursor: not-allowed; }
 .ib-tabrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .ib-cbox { border: 1px solid var(--edge); border-radius: var(--r); background: var(--sf); position: relative; }
-.ib-cbox:focus-within { border-color: var(--ac); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ac) 28%, transparent); }
+.ib-cbox:has(textarea:focus-visible) { border-color: var(--ac); outline: 2px solid var(--ac); outline-offset: 1px; }
+.ib .ib-cbox textarea:focus, .ib .ib-cbox textarea:focus-visible { outline: none; box-shadow: none; }
 .ib-cbox.ib-isnote { background: var(--wns); border-color: var(--wn); }
+.ib-cbox.ib-isnote:has(textarea:focus-visible) { border-color: var(--wn); outline-color: var(--wn); }
 .ib-cbox textarea { display: block; width: 100%; border: 0; background: transparent; padding: 10px 12px 4px; resize: none; min-height: 56px; max-height: 160px; outline: none; line-height: 1.45; }
 .ib-cbar { display: flex; align-items: center; gap: 6px; padding: 4px 8px 8px; flex-wrap: wrap; }
 .ib-cbar .ib-sp { flex: 1; }
