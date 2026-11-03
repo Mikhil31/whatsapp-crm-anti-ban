@@ -104,6 +104,9 @@ export interface Message {
   mediaUnavailable: boolean;
   /** Why the file could not be fetched, when the gateway recorded a reason (D-30). */
   mediaError?: string | null;
+  /** The campaign that sent this message, when one did. */
+  campaignId?: string | null;
+  campaignName?: string | null;
 }
 
 /** One internal note on a thread. Mirrors `GET /api/v1/conversations/:id/notes`. */
@@ -385,7 +388,7 @@ async function forwardedAuth(): Promise<Record<string, string>> {
  * `cache: 'no-store'` because an inbox is live data — Next would otherwise cache the fetch
  * for the lifetime of the build and show a thread frozen at deploy time.
  */
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const auth = await forwardedAuth();
   const response = await fetch(`${baseUrl()}/api/v1${path}`, {
     ...init,
@@ -413,6 +416,26 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return (payload as { data: T }).data;
+}
+
+/** Like `request`, but also gives back the envelope's `meta` (totals and counts), for the endpoints that send one. */
+export async function requestWithMeta<T, M>(path: string): Promise<{ data: T; meta: M }> {
+  const auth = await forwardedAuth();
+  const response = await fetch(`${baseUrl()}/api/v1${path}`, {
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json', ...auth }
+  });
+  if (response.status === 401) throw new NotAuthenticatedError();
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const problem = payload as Partial<ApiProblem> | null;
+    throw new CrmApiError({
+      code: problem?.code ?? 'UNKNOWN',
+      detail: problem?.detail ?? `The API returned ${String(response.status)}.`,
+      status: response.status
+    });
+  }
+  return payload as { data: T; meta: M };
 }
 
 /**
